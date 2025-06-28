@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>This app needs access to your photo library to pick videos.</string>
+	<string>This app needs access to your photo library to pick audio files.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>This app needs access to your microphone for video playback (if audio is part of the video).</string>
+	<string>This app needs access to your microphone for audio recording (if needed, otherwise can be removed).</string>
 	<key>NSAppleMusicUsageDescription</key>
-	<string>This app needs access to your media library to play local videos.</string>
+	<string>This app needs access to your media library to play local audio files.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

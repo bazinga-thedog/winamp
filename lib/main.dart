@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
+import 'package:audioplayers/audioplayers.dart'; // New audio player
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -14,31 +14,44 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Local Video Player',
+      title: 'Local Audio Player',
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: const VideoPlayerScreen(),
+      home: const AudioPlayerScreen(),
     );
   }
 }
 
-class VideoPlayerScreen extends StatefulWidget {
-  const VideoPlayerScreen({super.key});
+class AudioPlayerScreen extends StatefulWidget {
+  const AudioPlayerScreen({super.key});
 
   @override
-  State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+  State<AudioPlayerScreen> createState() => _AudioPlayerScreenState();
 }
 
-class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
-  VideoPlayerController? _controller;
-  File? _videoFile;
+class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
+  final AudioPlayer _audioPlayer = AudioPlayer(); // Create an instance of AudioPlayer
+  PlayerState _playerState = PlayerState.stopped; // To track current player state
+  String? _currentAudioPath; // To store the path of the currently playing audio
   bool _isPicking = false; // To prevent multiple file pickers opening
 
   @override
   void initState() {
     super.initState();
     _requestPermissions();
+    // Listen to player state changes
+    _audioPlayer.onPlayerStateChanged.listen((state) {
+      setState(() {
+        _playerState = state;
+      });
+    });
+    // Listen to completion of audio
+    _audioPlayer.onPlayerComplete.listen((event) {
+      setState(() {
+        _playerState = PlayerState.completed;
+      });
+    });
   }
 
   Future<void> _requestPermissions() async {
@@ -48,9 +61,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       status = await Permission.storage.request();
     }
 
-    // For Android 13+ (API 33+), request media video permission
-    if (Platform.isAndroid && await Permission.videos.status != PermissionStatus.granted) {
-      await Permission.videos.request();
+    // For Android 13+ (API 33+), request specific media audio permission
+    if (Platform.isAndroid && await Permission.audio.status != PermissionStatus.granted) {
+      await Permission.audio.request();
     }
 
     if (status.isGranted) {
@@ -61,7 +74,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  Future<void> _pickAndPlayVideo() async {
+  Future<void> _pickAndPlayAudio() async {
     if (_isPicking) return; // Prevent multiple pickers
 
     setState(() {
@@ -70,21 +83,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.video,
+        type: FileType.audio, // Changed to audio type
         allowMultiple: false,
       );
 
       if (result != null && result.files.single.path != null) {
-        _videoFile = File(result.files.single.path!);
-        await _initializeVideoPlayer(_videoFile!);
+        _currentAudioPath = result.files.single.path!;
+        await _playAudio(_currentAudioPath!);
       } else {
         // User canceled the picker
-        print('Video picking cancelled');
+        print('Audio picking cancelled');
       }
     } catch (e) {
-      print('Error picking video: $e');
+      print('Error picking audio: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error picking video: $e')),
+        SnackBar(content: Text('Error picking audio: $e')),
       );
     } finally {
       setState(() {
@@ -93,30 +106,29 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  Future<void> _initializeVideoPlayer(File videoFile) async {
-    // Dispose of previous controller if exists
-    if (_controller != null) {
-      await _controller!.dispose();
-    }
+  Future<void> _playAudio(String filePath) async {
+    // Stop any currently playing audio before playing a new one
+    await _audioPlayer.stop();
+    await _audioPlayer.play(DeviceFileSource(filePath));
+    setState(() {
+      _playerState = PlayerState.playing;
+    });
+  }
 
-    _controller = VideoPlayerController.file(videoFile);
-
-    try {
-      await _controller!.initialize();
-      setState(() {}); // Rebuild to show the video player
-      _controller!.play();
-    } catch (e) {
-      print('Error initializing video player: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error initializing video: $e')),
-      );
-      _controller = null; // Clear controller on error
+  // Toggles play/pause
+  Future<void> _togglePlayPause() async {
+    if (_playerState == PlayerState.playing) {
+      await _audioPlayer.pause();
+    } else if (_playerState == PlayerState.paused || _playerState == PlayerState.completed || _playerState == PlayerState.stopped) {
+      // If paused, completed, or stopped, play from current position or start
+      await _audioPlayer.resume(); // Use resume to continue from where it left off
     }
+    setState(() {}); // Update UI based on new state
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    _audioPlayer.dispose(); // Release resources when the widget is disposed
     super.dispose();
   }
 
@@ -124,47 +136,41 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Play Local MP4'),
+        title: const Text('Play Local MP3/Audio'),
       ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            if (_controller != null && _controller!.value.isInitialized)
-              AspectRatio(
-                aspectRatio: _controller!.value.aspectRatio,
-                child: VideoPlayer(_controller!),
-              )
-            else if (_videoFile != null)
-              const CircularProgressIndicator() // Show loading when video is selected but not initialized
-            else
-              const Text('No video selected'),
+            Text(
+              _currentAudioPath != null
+                  ? 'Currently playing: ${Uri.file(_currentAudioPath!).pathSegments.last}'
+                  : 'No audio selected',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16),
+            ),
             const SizedBox(height: 20),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 ElevatedButton(
-                  onPressed: _isPicking ? null : _pickAndPlayVideo,
-                  child: const Text('Pick and Play MP4'),
+                  onPressed: _isPicking ? null : _pickAndPlayAudio,
+                  child: const Text('Pick and Play Audio'),
                 ),
-                if (_controller != null && _controller!.value.isInitialized)
+                if (_currentAudioPath != null) // Only show play/pause if an audio is selected
                   Padding(
                     padding: const EdgeInsets.only(left: 8.0),
                     child: FloatingActionButton(
-                      onPressed: () {
-                        setState(() {
-                          _controller!.value.isPlaying
-                              ? _controller!.pause()
-                              : _controller!.play();
-                        });
-                      },
+                      onPressed: _togglePlayPause,
                       child: Icon(
-                        _controller!.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                        _playerState == PlayerState.playing ? Icons.pause : Icons.play_arrow,
                       ),
                     ),
                   ),
               ],
             ),
+            const SizedBox(height: 20),
+            Text('Player State: ${_playerState.name}'),
           ],
         ),
       ),
