@@ -16,6 +16,7 @@ class AudioApp extends StatelessWidget {
     return MaterialApp(
       title: 'Audio Recorder Demo',
       home: AudioPage(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
@@ -26,11 +27,12 @@ class AudioPage extends StatefulWidget {
 }
 
 class _AudioPageState extends State<AudioPage> {
-  final player = AudioPlayer();
-  final recorder = FlutterSoundRecorder();
-  final recordedPlayer = FlutterSoundPlayer();
+  final AudioPlayer player = AudioPlayer();
+  final FlutterSoundRecorder recorder = FlutterSoundRecorder();
+  final FlutterSoundPlayer recordedPlayer = FlutterSoundPlayer();
   late String recordPath;
   bool isBusy = false;
+  String status = 'Press the button to start';
 
   @override
   void initState() {
@@ -49,30 +51,40 @@ class _AudioPageState extends State<AudioPage> {
 
   Future<void> handleAudioProcess() async {
     if (isBusy) return;
-    setState(() => isBusy = true);
+
+    setState(() {
+      isBusy = true;
+      status = '🎵 Playing MP3...';
+    });
 
     try {
-      // 1. Play MP3 file from assets
+      // 1. Play MP3
       await player.setAsset('assets/sample.mp3');
       await player.play();
       await player.playerStateStream.firstWhere((state) => state.processingState == ProcessingState.completed);
 
       // 2. Record for 5 seconds
+      setState(() => status = '🎙️ Recording...');
       await recorder.startRecorder(toFile: recordPath, codec: Codec.aacMP4);
       await Future.delayed(Duration(seconds: 5));
       await recorder.stopRecorder();
 
-      // 3. Play the recorded audio
-      final duration = await recordedPlayer.startPlayer(
-        fromURI: recordPath,
-      );
+      // 3. Play recorded audio
+      setState(() => status = '🔊 Playing recording...');
+      final duration = await recordedPlayer.startPlayer(fromURI: recordPath);
       await Future.delayed(duration ?? Duration(seconds: 5));
 
+      setState(() {
+        status = '✅ Done. Press the button to start again.';
+        isBusy = false;
+      });
     } catch (e) {
       print("Error: $e");
+      setState(() {
+        status = '❌ Error occurred.';
+        isBusy = false;
+      });
     }
-
-    setState(() => isBusy = false);
   }
 
   @override
@@ -86,11 +98,25 @@ class _AudioPageState extends State<AudioPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Audio Player & Recorder')),
+      appBar: AppBar(title: Text('Audio Process Demo')),
       body: Center(
-        child: ElevatedButton(
-          onPressed: isBusy ? null : handleAudioProcess,
-          child: Text(isBusy ? 'Processing...' : 'Start Process'),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                status,
+                style: TextStyle(fontSize: 20),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 40),
+              ElevatedButton(
+                onPressed: isBusy ? null : handleAudioProcess,
+                child: Text(isBusy ? 'Processing...' : 'Start Process'),
+              ),
+            ],
+          ),
         ),
       ),
     );
