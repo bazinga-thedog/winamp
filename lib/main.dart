@@ -60,12 +60,19 @@ class _AudioPageState extends State<AudioPage> {
     try {
       // 1. Play MP3
       await player.setAsset('assets/sample.mp3');
+      await player.setVolume(1.0); // 1.0 = max volume
       await player.play();
-      await player.playerStateStream.firstWhere((state) => state.processingState == ProcessingState.completed);
+      await player.playerStateStream.firstWhere(
+        (state) => state.processingState == ProcessingState.completed,
+      );
 
       // 2. Record for 5 seconds
       setState(() => status = '🎙️ Recording...');
-      await recorder.startRecorder(toFile: recordPath, codec: Codec.aacMP4);
+      await recorder.startRecorder(
+        toFile: recordPath,
+        codec: Codec.pcm16WAV,
+        bitRate: 128000,
+      );
       await Future.delayed(Duration(seconds: 5));
       await recorder.stopRecorder();
 
