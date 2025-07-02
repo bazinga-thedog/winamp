@@ -70,7 +70,9 @@ class _AudioPageState extends State<AudioPage> {
       setState(() => status = '🎙️ Recording...');
       await recorder.startRecorder(
         toFile: recordPath,
-        codec: Codec.aacMP4
+        codec: Codec.aacMP4,
+        numChannels: 1,
+        sampleRate: 16000,
       );
       await Future.delayed(Duration(seconds: 5));
       await recorder.stopRecorder();
