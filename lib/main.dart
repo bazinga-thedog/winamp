@@ -78,7 +78,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
 
   Future<void> _playAudio() async {
     try {
-      await _audioPlayer.play(AssetSource('audio/question.mp3'));
+      await _audioPlayer.play(AssetSource('sample.mp3'));
     } catch (e) {
       print('Error playing audio: $e');
       ScaffoldMessenger.of(context).showSnackBar(
