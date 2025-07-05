@@ -95,7 +95,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
 
   Future<void> _startRecording() async {
     try {
-      if (await Permission.microphone.isGranted) {
+      /*if (await Permission.microphone.isGranted) {*/
         // Get app documents directory
         final directory = await Directory.systemTemp.createTemp();
         _recordingPath = '${directory.path}/recording.aac';
@@ -115,12 +115,12 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
           _stopRecording();
         });
         
-      } else {
+     /* } else {
         openAppSettings(); 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Microphone permission required')),
         );
-      }
+      }*/
     } catch (e) {
       print('Error starting recording: $e');
       setState(() {
