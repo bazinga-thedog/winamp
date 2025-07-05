@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart' as ap;
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
 import 'dart:async';
@@ -28,8 +28,8 @@ class AudioPlayerScreen extends StatefulWidget {
 }
 
 class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
-  final AudioPlayer _audioPlayer = AudioPlayer();
-  final Record _audioRecorder = Record();
+  final ap.AudioPlayer _audioPlayer = ap.AudioPlayer();
+  FlutterSoundRecorder? _audioRecorder;
   bool _isPlaying = false;
   bool _isRecording = false;
   bool _hasRecording = false;
@@ -40,18 +40,24 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   @override
   void initState() {
     super.initState();
+    _audioRecorder = FlutterSoundRecorder();
     
     // Listen to player state changes
-    _audioPlayer.onPlayerStateChanged.listen((PlayerState state) {
+    _audioPlayer.onPlayerStateChanged.listen((ap.PlayerState state) {
       setState(() {
-        _isPlaying = state == PlayerState.playing;
+        _isPlaying = state == ap.PlayerState.playing;
         if (!_isPlaying && !_isRecording && !_hasRecording) {
           _status = 'Ready to start';
         }
       });
     });
     
-    _checkPermissions();
+    _initRecorder();
+  }
+
+  Future<void> _initRecorder() async {
+    await _audioRecorder!.openRecorder();
+    await _checkPermissions();
   }
 
   Future<void> _checkPermissions() async {
@@ -78,7 +84,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
 
   Future<void> _playAudio() async {
     try {
-      await _audioPlayer.play(AssetSource('sample.mp3'));
+      await _audioPlayer.play(ap.AssetSource('sample.mp3'));
     } catch (e) {
       print('Error playing audio: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -92,14 +98,17 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
       if (await Permission.microphone.isGranted) {
         // Get app documents directory
         final directory = await Directory.systemTemp.createTemp();
-        _recordingPath = '${directory.path}/recording.m4a';
+        _recordingPath = '${directory.path}/recording.aac';
         
         setState(() {
           _isRecording = true;
           _status = 'Recording... (3 seconds)';
         });
         
-        await _audioRecorder.start(path: _recordingPath);
+        await _audioRecorder!.startRecorder(
+          toFile: _recordingPath,
+          codec: Codec.aacADTS,
+        );
         
         // Record for 3 seconds
         _recordingTimer = Timer(Duration(seconds: 3), () {
@@ -122,7 +131,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
 
   Future<void> _stopRecording() async {
     try {
-      await _audioRecorder.stop();
+      await _audioRecorder!.stopRecorder();
       _recordingTimer?.cancel();
       
       setState(() {
@@ -141,7 +150,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
         setState(() {
           _status = 'Playing your recording...';
         });
-        await _audioPlayer.play(DeviceFileSource(_recordingPath));
+        await _audioPlayer.play(ap.DeviceFileSource(_recordingPath));
       } catch (e) {
         print('Error playing recording: $e');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -166,7 +175,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   @override
   void dispose() {
     _audioPlayer.dispose();
-    _audioRecorder.dispose();
+    _audioRecorder?.closeRecorder();
     _recordingTimer?.cancel();
     super.dispose();
   }
