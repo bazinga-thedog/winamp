@@ -25,6 +25,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   Future<void> _playAudio() async {
+    _audioPlayer.setVolume(1.0);
     await _audioPlayer.play(AssetSource('assets/sample.mp3'));
   }
 
