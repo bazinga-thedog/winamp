@@ -29,7 +29,7 @@ class AudioPlayerScreen extends StatefulWidget {
 
 class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final AudioRecorder _audioRecorder = AudioRecorder();
+  final Record _audioRecorder = Record();
   bool _isPlaying = false;
   bool _isRecording = false;
   bool _hasRecording = false;
@@ -99,14 +99,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
           _status = 'Recording... (3 seconds)';
         });
         
-        await _audioRecorder.start(
-          const RecordConfig(
-            encoder: AudioEncoder.aacLc,
-            bitRate: 128000,
-            sampleRate: 44100,
-          ),
-          path: _recordingPath,
-        );
+        await _audioRecorder.start(path: _recordingPath);
         
         // Record for 3 seconds
         _recordingTimer = Timer(Duration(seconds: 3), () {
