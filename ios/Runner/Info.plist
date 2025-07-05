@@ -51,6 +51,7 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	
+	 <key>NSMicrophoneUsageDescription</key>
+    <string>This app needs microphone access to record audio for conversational forms.</string>
 </dict>
 </plist>
