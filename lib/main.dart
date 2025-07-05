@@ -116,6 +116,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
         });
         
       } else {
+        openAppSettings(); 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Microphone permission required')),
         );
