@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>We need access to the microphone for voice features</string>
+<dict>    
+    <!-- Add this microphone permission -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>This app needs microphone access to record audio responses.</string>  
+    <!-- Add this media library permission for flutter_sound -->
+    <key>NSAppleMusicUsageDescription</key>
+    <string>This app needs access to media library for audio recording.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
@@ -51,7 +55,5 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	 <key>NSMicrophoneUsageDescription</key>
-    <string>This app needs microphone access to record audio for conversational forms.</string>
 </dict>
 </plist>
