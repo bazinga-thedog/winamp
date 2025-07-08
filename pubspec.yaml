@@ -30,9 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  just_audio: ^0.9.34
+  just_audio: ^0.9.35
   record: ^5.0.4
-  permission_handler: ^11.0.1
   path_provider: ^2.1.1
 dev_dependencies:
   flutter_test:
