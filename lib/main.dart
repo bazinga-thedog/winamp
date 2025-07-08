@@ -63,6 +63,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
     await Future.delayed(Duration(seconds: 5));
     await _recorder.stopRecorder();
+    // Reinitialize player to fix low-volume issue
+    await _player.closePlayer();
+    await _player.openPlayer();
   }
 
   Future<void> _playRecordedVoice() async {
