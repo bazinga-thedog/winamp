@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -28,18 +29,21 @@ class AudioPlayerRecorderScreen extends StatefulWidget {
 
 class _AudioPlayerRecorderScreenState extends State<AudioPlayerRecorderScreen> {
   late AudioPlayer _audioPlayer;
-  late AudioRecorder _audioRecorder;
+  AudioRecorder? _audioRecorder;
   
   String? _recordingPath;
   bool _isRecording = false;
   bool _isPlayingSample = false;
   bool _isPlayingRecording = false;
+  bool _isRecordingSupported = false;
   
   @override
   void initState() {
     super.initState();
     _audioPlayer = AudioPlayer();
-    _audioRecorder = AudioRecorder();
+    
+    // Only initialize recorder on supported platforms
+    _initializeRecorder();
     
     // Listen to player state changes
     _audioPlayer.playerStateStream.listen((state) {
@@ -50,10 +54,32 @@ class _AudioPlayerRecorderScreenState extends State<AudioPlayerRecorderScreen> {
     });
   }
 
+  Future<void> _initializeRecorder() async {
+    // Check if recording is supported on this platform
+    if (kIsWeb || Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+      setState(() {
+        _isRecordingSupported = false;
+      });
+      return;
+    }
+    
+    try {
+      _audioRecorder = AudioRecorder();
+      setState(() {
+        _isRecordingSupported = true;
+      });
+    } catch (e) {
+      setState(() {
+        _isRecordingSupported = false;
+      });
+      print('Recording not supported on this platform: $e');
+    }
+  }
+
   @override
   void dispose() {
     _audioPlayer.dispose();
-    _audioRecorder.dispose();
+    _audioRecorder?.dispose();
     super.dispose();
   }
 
@@ -73,12 +99,19 @@ class _AudioPlayerRecorderScreenState extends State<AudioPlayerRecorderScreen> {
   }
 
   Future<void> _startRecording() async {
+    if (!_isRecordingSupported || _audioRecorder == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Recording not supported on this platform. Please run on iOS or Android device.')),
+      );
+      return;
+    }
+
     try {
-      if (await _audioRecorder.hasPermission()) {
+      if (await _audioRecorder!.hasPermission()) {
         final directory = await getApplicationDocumentsDirectory();
         _recordingPath = '${directory.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
         
-        await _audioRecorder.start(
+        await _audioRecorder!.start(
           RecordConfig(
             encoder: AudioEncoder.aacLc,
             sampleRate: 44100,
@@ -114,8 +147,10 @@ class _AudioPlayerRecorderScreenState extends State<AudioPlayerRecorderScreen> {
   }
 
   Future<void> _stopRecording() async {
+    if (_audioRecorder == null) return;
+    
     try {
-      await _audioRecorder.stop();
+      await _audioRecorder!.stop();
       setState(() {
         _isRecording = false;
       });
@@ -188,11 +223,15 @@ class _AudioPlayerRecorderScreenState extends State<AudioPlayerRecorderScreen> {
               height: 60,
               margin: EdgeInsets.symmetric(vertical: 16),
               child: ElevatedButton.icon(
-                onPressed: _isRecording ? null : _startRecording,
+                onPressed: (!_isRecordingSupported || _isRecording) ? null : _startRecording,
                 icon: Icon(_isRecording ? Icons.mic : Icons.mic_none),
-                label: Text(_isRecording ? 'Recording...' : 'Record 5sec'),
+                label: Text(_isRecording 
+                    ? 'Recording...' 
+                    : (_isRecordingSupported ? 'Record 5sec' : 'Not Supported')),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _isRecording ? Colors.red : Colors.green,
+                  backgroundColor: _isRecording 
+                      ? Colors.red 
+                      : (_isRecordingSupported ? Colors.green : Colors.grey),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -207,11 +246,11 @@ class _AudioPlayerRecorderScreenState extends State<AudioPlayerRecorderScreen> {
               height: 60,
               margin: EdgeInsets.symmetric(vertical: 16),
               child: ElevatedButton.icon(
-                onPressed: _recordingPath == null ? null : _playRecording,
+                onPressed: (_recordingPath == null || !_isRecordingSupported) ? null : _playRecording,
                 icon: Icon(_isPlayingRecording ? Icons.stop : Icons.play_arrow),
                 label: Text(_isPlayingRecording ? 'Stop Recording' : 'Play Recording'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _recordingPath == null ? Colors.grey : Colors.orange,
+                  backgroundColor: (_recordingPath == null || !_isRecordingSupported) ? Colors.grey : Colors.orange,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -238,7 +277,8 @@ class _AudioPlayerRecorderScreenState extends State<AudioPlayerRecorderScreen> {
                   if (_isPlayingRecording)
                     Text('🎵 Playing recording', style: TextStyle(color: Colors.orange, fontSize: 16)),
                   if (!_isRecording && !_isPlayingSample && !_isPlayingRecording)
-                    Text('Ready', style: TextStyle(color: Colors.green, fontSize: 16)),
+                    Text(_isRecordingSupported ? 'Ready' : 'Recording only available on iOS/Android', 
+                         style: TextStyle(color: _isRecordingSupported ? Colors.green : Colors.orange, fontSize: 16)),
                 ],
               ),
             ),
