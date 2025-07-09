@@ -12,7 +12,7 @@ import AVFoundation
     //Needed inorder to make audio recordings not soft
       do {
          let session = AVAudioSession.sharedInstance()
-         try session.setCategory(.playAndRecord, mode: .default, options: .defaultToSpeaker)
+         try session.setCategory(.playAndRecord, mode: .voiceProcessing, options: [.defaultToSpeaker, .allowBluetooth])
          try session.setActive(true)
       } catch {
          debugPrint("Problem with AVAudioSession")

@@ -58,7 +58,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
     await _recorder.startRecorder(
       toFile: path,
-      codec: Codec.aacADTS,
+      codec: Codec.opusWebM,
     );
 
     await Future.delayed(Duration(seconds: 5));
