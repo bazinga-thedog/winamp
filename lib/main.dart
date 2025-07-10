@@ -5,6 +5,7 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 void main() {
   runApp(AudioApp());
@@ -29,8 +30,11 @@ class _AudioHomePageState extends State<AudioHomePage> {
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
   final FlutterSoundPlayer _player = FlutterSoundPlayer();
+  final stt.SpeechToText _speech = stt.SpeechToText();
 
   String _recordedFilePath = '';
+  String _transcribedText = '';
+  bool _isSpeechAvailable = false;
 
   @override
   void initState() {
@@ -38,11 +42,19 @@ class _AudioHomePageState extends State<AudioHomePage> {
     _initPermissions();
     _player.openPlayer();
     _recorder.openRecorder();
+    _initSpeechRecognizer();
   }
 
   Future<void> _initPermissions() async {
     await Permission.microphone.request();
     await Permission.storage.request();
+  }
+
+   Future<void> _initSpeechRecognizer() async {
+    _isSpeechAvailable = await _speech.initialize(
+      onStatus: (status) => print('Speech status: $status'),
+      onError: (error) => print('Speech error: $error'),
+    );
   }
 
   Future<void> _playAssetAudio() async {
@@ -54,7 +66,23 @@ class _AudioHomePageState extends State<AudioHomePage> {
     String path = '${tempDir.path}/recorded.aac';
     setState(() {
       _recordedFilePath = path;
+      _transcribedText = ''; // clear previous transcription
     });
+
+    // Start speech recognition
+    if (_isSpeechAvailable) {
+      await _speech.listen(
+        onResult: (result) {
+          setState(() {
+            _transcribedText = result.recognizedWords;
+          });
+        },
+        listenFor: Duration(seconds: 5),
+        localeId: 'en_US',
+      );
+    }
+
+    // Start recording
 
     await _recorder.startRecorder(
       toFile: path,
@@ -66,6 +94,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
     // Reinitialize player to fix low-volume issue
     await _player.closePlayer();
     await _player.openPlayer();
+    // Stop speech recognition
+    await _speech.stop();
   }
 
   Future<void> _playRecordedVoice() async {
@@ -83,6 +113,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     _audioPlayer.dispose();
     _recorder.closeRecorder();
     _player.closePlayer();
+    _speech.stop();
     super.dispose();
   }
 
@@ -106,6 +137,12 @@ class _AudioHomePageState extends State<AudioHomePage> {
               onPressed: _playRecordedVoice,
               child: Text('Play Recorded Voice'),
             ),
+            SizedBox(height: 20),
+            Text(
+              'Transcribed Text:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Text(_transcribedText.isNotEmpty ? _transcribedText : '---'),
           ],
         ),
       ),
