@@ -103,7 +103,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     // Background watcher: check every 200ms if no new text for 1s
     Timer.periodic(Duration(milliseconds: 200), (timer) async {
       final diff = DateTime.now().difference(lastChangeTime);
-      if (diff.inMilliseconds > 1000 && !isSilentTimeoutTriggered) {
+      if (diff.inMilliseconds > 2000 && !isSilentTimeoutTriggered) {
         isSilentTimeoutTriggered = true;
         timer.cancel();
 
