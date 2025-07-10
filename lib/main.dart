@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:fluttertoast/fluttertoast.dart';
 
 void main() {
   runApp(AudioApp());
@@ -50,7 +51,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     await Permission.storage.request();
   }
 
-   Future<void> _initSpeechRecognizer() async {
+  Future<void> _initSpeechRecognizer() async {
     _isSpeechAvailable = await _speech.initialize(
       onStatus: (status) => print('Speech status: $status'),
       onError: (error) => print('Speech error: $error'),
@@ -69,15 +70,25 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _transcribedText = ''; // clear previous transcription
     });
 
+    bool isSilentTimeoutTriggered = false;
+    String lastTranscription = '';
+    DateTime lastChangeTime = DateTime.now();
+
     // Start speech recognition
     if (_isSpeechAvailable) {
       await _speech.listen(
         onResult: (result) {
-          setState(() {
-            _transcribedText = result.recognizedWords;
-          });
+          final currentText = result.recognizedWords;
+          if (currentText != lastTranscription) {
+            setState(() {
+              _transcribedText = currentText;
+            });
+            lastTranscription = currentText;
+            lastChangeTime = DateTime.now();
+          }
         },
-        listenFor: Duration(seconds: 5),
+        listenFor: Duration(seconds: 10),
+        pauseFor: Duration(seconds: 1),
         localeId: 'en_US',
       );
     }
@@ -89,13 +100,48 @@ class _AudioHomePageState extends State<AudioHomePage> {
       codec: Codec.aacADTS,
     );
 
-    await Future.delayed(Duration(seconds: 5));
-    await _recorder.stopRecorder();
-    // Reinitialize player to fix low-volume issue
-    await _player.closePlayer();
-    await _player.openPlayer();
-    // Stop speech recognition
-    await _speech.stop();
+    // Background watcher: check every 200ms if no new text for 1s
+    Timer.periodic(Duration(milliseconds: 200), (timer) async {
+      final diff = DateTime.now().difference(lastChangeTime);
+      if (diff.inMilliseconds > 1000 && !isSilentTimeoutTriggered) {
+        isSilentTimeoutTriggered = true;
+        timer.cancel();
+
+        // Stop recorder and speech
+        await _recorder.stopRecorder();
+        await _speech.stop();
+
+        // Reset player (optional fix for volume bug)
+        await _player.closePlayer();
+        await _player.openPlayer();
+
+        Fluttertoast.showToast(
+          msg: "No voice detected, stopping recording.",
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+        );
+      }
+
+      // Safety: if user talks after timeout, do nothing
+      if (isSilentTimeoutTriggered) timer.cancel();
+    });
+
+    // Backup: Stop after 10 seconds max
+    Future.delayed(Duration(seconds: 10), () async {
+      if (!isSilentTimeoutTriggered) {
+        await _recorder.stopRecorder();
+        await _speech.stop();
+        await _player.closePlayer();
+        await _player.openPlayer();
+      }
+    });
+    // await Future.delayed(Duration(seconds: 5));
+    // await _recorder.stopRecorder();
+    // // Reinitialize player to fix low-volume issue
+    // await _player.closePlayer();
+    // await _player.openPlayer();
+    // // Stop speech recognition
+    // await _speech.stop();
   }
 
   Future<void> _playRecordedVoice() async {
