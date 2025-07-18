@@ -106,7 +106,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     _silenceChecker?.cancel();
     _silenceChecker = Timer.periodic(Duration(milliseconds: 200), (timer) async {
       final silentDuration = DateTime.now().difference(_lastTextUpdateTime);
-      if (silentDuration.inMilliseconds > 1000 && _recordingActive) {
+      if (silentDuration.inMilliseconds > 2000 && _recordingActive) {
         timer.cancel();
         await _stopAll("No voice detected, stopping recording.");
       }
