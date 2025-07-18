@@ -1,10 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:fluttertoast/fluttertoast.dart';
 
@@ -16,7 +16,8 @@ class AudioApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Audio App',
+      title: 'Flutter Audio + STT',
+      theme: ThemeData(primarySwatch: Colors.deepPurple),
       home: AudioHomePage(),
     );
   }
@@ -35,122 +36,106 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
   String _recordedFilePath = '';
   String _transcribedText = '';
+  String _lastTranscribedText = '';
+  DateTime _lastTextUpdateTime = DateTime.now();
+  bool _recordingActive = false;
   bool _isSpeechAvailable = false;
+  Timer? _silenceChecker;
 
   @override
   void initState() {
     super.initState();
-    _initPermissions();
-    _player.openPlayer();
-    _recorder.openRecorder();
-    _initSpeechRecognizer();
+    _initAll();
+  }
+
+  Future<void> _initAll() async {
+    await _initPermissions();
+    await _player.openPlayer();
+    await _recorder.openRecorder();
+    _isSpeechAvailable = await _speech.initialize();
   }
 
   Future<void> _initPermissions() async {
     await Permission.microphone.request();
     await Permission.storage.request();
-  }
-
-  Future<void> _initSpeechRecognizer() async {
-    _isSpeechAvailable = await _speech.initialize(
-      onStatus: (status) => print('Speech status: $status'),
-      onError: (error) => print('Speech error: $error'),
-    );
+    await Permission.speech.request();
   }
 
   Future<void> _playAssetAudio() async {
     await _audioPlayer.play(AssetSource('sample.mp3'));
   }
 
-  Future<void> _recordVoice() async {
+  Future<void> _startRecordingWithTranscription() async {
+    _transcribedText = '';
+    _lastTranscribedText = '';
+    _recordingActive = true;
+    _lastTextUpdateTime = DateTime.now();
+
     Directory tempDir = await getTemporaryDirectory();
     String path = '${tempDir.path}/recorded.aac';
-    setState(() {
-      _recordedFilePath = path;
-      _transcribedText = ''; // clear previous transcription
-    });
+    _recordedFilePath = path;
 
-    bool isSilentTimeoutTriggered = false;
-    String lastTranscription = '';
-    DateTime lastChangeTime = DateTime.now();
-
-    // Start speech recognition
-    if (_isSpeechAvailable) {
-      await _speech.listen(
-        onResult: (result) {
-          final currentText = result.recognizedWords;
-          if (currentText != lastTranscription) {
-            setState(() {
-              _transcribedText = currentText;
-            });
-            lastTranscription = currentText;
-            lastChangeTime = DateTime.now();
-          }
-        },
-        listenFor: Duration(seconds: 10),
-        pauseFor: Duration(seconds: 1),
-        localeId: 'en_US',
-      );
-    }
-
-    // Start recording
-
+    // Start recorder
     await _recorder.startRecorder(
       toFile: path,
       codec: Codec.aacADTS,
     );
 
-    // Background watcher: check every 200ms if no new text for 1s
-    Timer.periodic(Duration(milliseconds: 200), (timer) async {
-      final diff = DateTime.now().difference(lastChangeTime);
-      if (diff.inMilliseconds > 2000 && !isSilentTimeoutTriggered) {
-        isSilentTimeoutTriggered = true;
+    // Start STT
+    if (_isSpeechAvailable) {
+      await _speech.listen(
+        listenFor: Duration(seconds: 10),
+        pauseFor: Duration(seconds: 1),
+        onResult: (result) {
+          final currentText = result.recognizedWords;
+          if (currentText != _lastTranscribedText) {
+            _lastTranscribedText = currentText;
+            _lastTextUpdateTime = DateTime.now();
+            if (mounted) {
+              setState(() {
+                _transcribedText = currentText;
+              });
+            }
+          }
+        },
+        localeId: 'en_US',
+      );
+    }
+
+    // Check for silence
+    _silenceChecker?.cancel();
+    _silenceChecker = Timer.periodic(Duration(milliseconds: 200), (timer) async {
+      final silentDuration = DateTime.now().difference(_lastTextUpdateTime);
+      if (silentDuration.inMilliseconds > 1000 && _recordingActive) {
         timer.cancel();
-
-        // Stop recorder and speech
-        await _recorder.stopRecorder();
-        await _speech.stop();
-
-        // Reset player (optional fix for volume bug)
-        await _player.closePlayer();
-        await _player.openPlayer();
-
-        Fluttertoast.showToast(
-          msg: "No voice detected, stopping recording.",
-          toastLength: Toast.LENGTH_SHORT,
-          gravity: ToastGravity.BOTTOM,
-        );
+        await _stopAll("No voice detected, stopping recording.");
       }
-
-      // Safety: if user talks after timeout, do nothing
-      if (isSilentTimeoutTriggered) timer.cancel();
     });
 
-    // Backup: Stop after 10 seconds max
+    // Stop everything after 10 seconds max
     Future.delayed(Duration(seconds: 10), () async {
-      if (!isSilentTimeoutTriggered) {
-        await _recorder.stopRecorder();
-        await _speech.stop();
-        await _player.closePlayer();
-        await _player.openPlayer();
+      if (_recordingActive) {
+        await _stopAll("Recording stopped after 10 seconds.");
       }
     });
-    // await Future.delayed(Duration(seconds: 5));
-    // await _recorder.stopRecorder();
-    // // Reinitialize player to fix low-volume issue
-    // await _player.closePlayer();
-    // await _player.openPlayer();
-    // // Stop speech recognition
-    // await _speech.stop();
+  }
+
+  Future<void> _stopAll(String message) async {
+    _recordingActive = false;
+    _silenceChecker?.cancel();
+    if (_speech.isListening) await _speech.stop();
+    if (_recorder.isRecording) await _recorder.stopRecorder();
+    await _player.closePlayer();
+    await _player.openPlayer();
+
+    Fluttertoast.showToast(msg: message, gravity: ToastGravity.BOTTOM);
   }
 
   Future<void> _playRecordedVoice() async {
     if (_recordedFilePath.isNotEmpty && File(_recordedFilePath).existsSync()) {
       await _player.startPlayer(fromURI: _recordedFilePath);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No recording found')),
-      );
+      Fluttertoast.showToast(msg: "No recording found.", gravity: ToastGravity.BOTTOM);
     }
   }
 
@@ -160,14 +145,18 @@ class _AudioHomePageState extends State<AudioHomePage> {
     _recorder.closeRecorder();
     _player.closePlayer();
     _speech.stop();
+    _silenceChecker?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Flutter Audio Demo')),
-      body: Center(
+      appBar: AppBar(
+        title: Text('Audio + Speech-to-Text'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -175,20 +164,22 @@ class _AudioHomePageState extends State<AudioHomePage> {
               onPressed: _playAssetAudio,
               child: Text('Play Asset Audio'),
             ),
+            SizedBox(height: 16),
             ElevatedButton(
-              onPressed: _recordVoice,
-              child: Text('Record Voice (5 sec)'),
+              onPressed: _startRecordingWithTranscription,
+              child: Text('Record with STT (Auto-Stop on Silence)'),
             ),
+            SizedBox(height: 16),
             ElevatedButton(
               onPressed: _playRecordedVoice,
-              child: Text('Play Recorded Voice'),
+              child: Text('Play Last Recording'),
             ),
-            SizedBox(height: 20),
+            SizedBox(height: 24),
             Text(
               'Transcribed Text:',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
-            Text(_transcribedText.isNotEmpty ? _transcribedText : '---'),
+            Text(_transcribedText.isNotEmpty ? _transcribedText : "---"),
           ],
         ),
       ),
