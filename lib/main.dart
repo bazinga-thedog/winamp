@@ -5,7 +5,6 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:fluttertoast/fluttertoast.dart';
 
 void main() {
@@ -16,8 +15,8 @@ class AudioApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Audio + STT',
-      theme: ThemeData(primarySwatch: Colors.deepPurple),
+      title: 'Audio Recording + Silence Detection',
+      theme: ThemeData(primarySwatch: Colors.indigo),
       home: AudioHomePage(),
     );
   }
@@ -32,15 +31,13 @@ class _AudioHomePageState extends State<AudioHomePage> {
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
   final FlutterSoundPlayer _player = FlutterSoundPlayer();
-  final stt.SpeechToText _speech = stt.SpeechToText();
 
   String _recordedFilePath = '';
-  String _transcribedText = '';
-  String _lastTranscribedText = '';
-  DateTime _lastTextUpdateTime = DateTime.now();
   bool _recordingActive = false;
-  bool _isSpeechAvailable = false;
+  DateTime _lastVoiceTime = DateTime.now();
+  final double _silenceThresholdDb = -45.0;
   Timer? _silenceChecker;
+  double? _currentDecibel;
 
   @override
   void initState() {
@@ -52,70 +49,59 @@ class _AudioHomePageState extends State<AudioHomePage> {
     await _initPermissions();
     await _player.openPlayer();
     await _recorder.openRecorder();
-    _isSpeechAvailable = await _speech.initialize();
   }
 
   Future<void> _initPermissions() async {
     await Permission.microphone.request();
     await Permission.storage.request();
-    await Permission.speech.request();
   }
 
   Future<void> _playAssetAudio() async {
     await _audioPlayer.play(AssetSource('sample.mp3'));
   }
 
-  Future<void> _startRecordingWithTranscription() async {
-    _transcribedText = '';
-    _lastTranscribedText = '';
+  Future<void> _startRecordingWithSilenceDetection() async {
     _recordingActive = true;
-    _lastTextUpdateTime = DateTime.now();
-
     Directory tempDir = await getTemporaryDirectory();
     String path = '${tempDir.path}/recorded.aac';
     _recordedFilePath = path;
+    _lastVoiceTime = DateTime.now();
+    _currentDecibel = null;
 
-    // Start recorder
     await _recorder.startRecorder(
       toFile: path,
       codec: Codec.aacADTS,
+      sampleRate: 44100,
+      bitRate: 128000,
+      numChannels: 1,
+      audioSource: AudioSource.microphone,
     );
 
-    // Start STT
-    if (_isSpeechAvailable) {
-      await _speech.listen(
-        listenFor: Duration(seconds: 10),
-        pauseFor: Duration(seconds: 1),
-        onResult: (result) {
-          final currentText = result.recognizedWords;
-          if (currentText != _lastTranscribedText) {
-            _lastTranscribedText = currentText;
-            _lastTextUpdateTime = DateTime.now();
-            if (mounted) {
-              setState(() {
-                _transcribedText = currentText;
-              });
-            }
-          }
-        },
-        localeId: 'en_US',
-      );
-    }
-
-    // Check for silence
-    _silenceChecker?.cancel();
-    _silenceChecker = Timer.periodic(Duration(milliseconds: 200), (timer) async {
-      final silentDuration = DateTime.now().difference(_lastTextUpdateTime);
-      if (silentDuration.inMilliseconds > 2000 && _recordingActive) {
-        timer.cancel();
-        await _stopAll("No voice detected, stopping recording.");
+    _recorder.onProgress?.listen((event) {
+      final db = event.decibels;
+      if (db != null) {
+        setState(() {
+          _currentDecibel = db;
+        });
+        if (db > _silenceThresholdDb) {
+          _lastVoiceTime = DateTime.now();
+        }
       }
     });
 
-    // Stop everything after 10 seconds max
-    Future.delayed(Duration(seconds: 10), () async {
+    _silenceChecker?.cancel();
+    _silenceChecker = Timer.periodic(Duration(milliseconds: 200), (timer) async {
+      final durationSilent = DateTime.now().difference(_lastVoiceTime);
+      if (_recordingActive && durationSilent.inMilliseconds > 5000) {
+        timer.cancel();
+        await _stopAll("Silence detected, stopping recording.");
+      }
+    });
+
+    // Force stop after 20 seconds max
+    Future.delayed(Duration(seconds: 20), () async {
       if (_recordingActive) {
-        await _stopAll("Recording stopped after 10 seconds.");
+        await _stopAll("20 seconds max recording reached.");
       }
     });
   }
@@ -123,12 +109,14 @@ class _AudioHomePageState extends State<AudioHomePage> {
   Future<void> _stopAll(String message) async {
     _recordingActive = false;
     _silenceChecker?.cancel();
-    if (_speech.isListening) await _speech.stop();
     if (_recorder.isRecording) await _recorder.stopRecorder();
     await _player.closePlayer();
     await _player.openPlayer();
 
     Fluttertoast.showToast(msg: message, gravity: ToastGravity.BOTTOM);
+    setState(() {
+      _currentDecibel = null;
+    });
   }
 
   Future<void> _playRecordedVoice() async {
@@ -144,7 +132,6 @@ class _AudioHomePageState extends State<AudioHomePage> {
     _audioPlayer.dispose();
     _recorder.closeRecorder();
     _player.closePlayer();
-    _speech.stop();
     _silenceChecker?.cancel();
     super.dispose();
   }
@@ -153,7 +140,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Audio + Speech-to-Text'),
+        title: Text('Audio + Silence Detection'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
@@ -166,20 +153,21 @@ class _AudioHomePageState extends State<AudioHomePage> {
             ),
             SizedBox(height: 16),
             ElevatedButton(
-              onPressed: _startRecordingWithTranscription,
-              child: Text('Record with STT (Auto-Stop on Silence)'),
+              onPressed: _startRecordingWithSilenceDetection,
+              child: Text('Record with Silence Detection'),
             ),
             SizedBox(height: 16),
             ElevatedButton(
               onPressed: _playRecordedVoice,
               child: Text('Play Last Recording'),
             ),
-            SizedBox(height: 24),
+            SizedBox(height: 32),
             Text(
-              'Transcribed Text:',
-              style: TextStyle(fontWeight: FontWeight.bold),
+              _currentDecibel != null
+                  ? 'Mic Level: ${_currentDecibel!.toStringAsFixed(1)} dB'
+                  : 'Mic Level: -- dB',
+              style: TextStyle(fontSize: 18),
             ),
-            Text(_transcribedText.isNotEmpty ? _transcribedText : "---"),
           ],
         ),
       ),
