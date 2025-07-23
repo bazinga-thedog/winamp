@@ -6,21 +6,17 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:fluttertoast/fluttertoast.dart';
-import 'package:noise_meter/noise_meter.dart';
+import 'package:vad/vad.dart';
 
-void main() {
-  runApp(AudioApp());
-}
+void main() => runApp(AudioApp());
 
 class AudioApp extends StatelessWidget {
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Noise Meter Recording',
-      theme: ThemeData(primarySwatch: Colors.indigo),
-      home: AudioHomePage(),
-    );
-  }
+  Widget build(BuildContext context) => MaterialApp(
+        title: 'VAD Recording',
+        theme: ThemeData(primarySwatch: Colors.indigo),
+        home: AudioHomePage(),
+      );
 }
 
 class AudioHomePage extends StatefulWidget {
@@ -32,93 +28,81 @@ class _AudioHomePageState extends State<AudioHomePage> {
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
   final FlutterSoundPlayer _player = FlutterSoundPlayer();
-  final NoiseMeter _noiseMeter = NoiseMeter();
+  late final VadHandlerBase _vad;
 
-  StreamSubscription<NoiseReading>? _noiseSubscription;
-  double? _currentDecibel;
+  bool _recording = false;
   DateTime _lastVoiceTime = DateTime.now();
-  final double _silenceThresholdDb = 50.0; // Plugin: meanDecibel over 50 = voice
-  bool _recordingActive = false;
   Timer? _silenceChecker;
-  String _recordedFilePath = '';
+  String _recordedPath = '';
 
   @override
   void initState() {
     super.initState();
-    _initAll();
+    _vad = VadHandler.create(isDebug: false);
+    _vad.onSpeechStart.listen((_) => _lastVoiceTime = DateTime.now());
+    _vad.onRealSpeechStart.listen((_) => _lastVoiceTime = DateTime.now());
+    _vad.onSpeechEnd.listen((_) => _lastVoiceTime = DateTime.now());
+    _initSetup();
   }
 
-  Future<void> _initAll() async {
+  Future<void> _initSetup() async {
     await Permission.microphone.request();
     await Permission.storage.request();
     await _player.openPlayer();
     await _recorder.openRecorder();
   }
 
-  Future<void> _playAssetAudio() async {
+  Future<void> _playAsset() async {
     await _audioPlayer.play(AssetSource('sample.mp3'));
   }
 
-  Future<void> _startRecordingWithNoiseDetection() async {
-    _recordingActive = true;
+  Future<void> _startRecording() async {
+    _recording = true;
     Directory dir = await getTemporaryDirectory();
-    _recordedFilePath = '${dir.path}/recorded.wav';
+    _recordedPath = '${dir.path}/recorded.wav';
     _lastVoiceTime = DateTime.now();
-    _currentDecibel = null;
 
     await _recorder.startRecorder(
-      toFile: _recordedFilePath,
+      toFile: _recordedPath,
       codec: Codec.pcm16WAV,
-      sampleRate: 44100,
-      bitRate: 128000,
       numChannels: 1,
       audioSource: AudioSource.microphone,
     );
 
-    _noiseSubscription = _noiseMeter.noise.listen((NoiseReading reading) {
-      setState(() {
-        _currentDecibel = reading.meanDecibel;
-      });
-      if (reading.meanDecibel > _silenceThresholdDb) {
-        _lastVoiceTime = DateTime.now();
-      }
-    }, onError: (err) {
-      print('NoiseMeter error: $err');
-    });
+    await _vad.startListening();
 
     _silenceChecker?.cancel();
-    _silenceChecker = Timer.periodic(Duration(milliseconds: 200), (timer) async {
-      if (!_recordingActive) return timer.cancel();
+    _silenceChecker = Timer.periodic(const Duration(milliseconds: 200), (t) async {
+      if (!_recording) return t.cancel();
       if (DateTime.now().difference(_lastVoiceTime).inMilliseconds > 1000) {
-        timer.cancel();
-        await _stopAll("Silence detected—stopping recording.");
+        t.cancel();
+        await _stopRecording("Silence detected—stopping.");
       }
     });
 
-    Future.delayed(Duration(seconds: 20), () async {
-      if (_recordingActive) {
-        await _stopAll("20s max recording reached.");
-      }
+    Future.delayed(const Duration(seconds: 20), () async {
+      if (_recording) await _stopRecording("20‑second limit reached.");
     });
   }
 
-  Future<void> _stopAll(String msg) async {
-    _recordingActive = false;
+  Future<void> _stopRecording(String msg) async {
+    _recording = false;
     _silenceChecker?.cancel();
-    await _noiseSubscription?.cancel();
+    await _vad.stopListening();
     if (_recorder.isRecording) await _recorder.stopRecorder();
     await _player.closePlayer();
     await _player.openPlayer();
-
     Fluttertoast.showToast(msg: msg, gravity: ToastGravity.BOTTOM);
-    setState(() => _currentDecibel = null);
   }
 
-  Future<void> _playRecordedVoice() async {
-    if (_recordedFilePath.isNotEmpty && File(_recordedFilePath).existsSync()) {
-      await _player.startPlayer(fromURI: _recordedFilePath);
+  Future<void> _playRecording() async {
+    if (_recordedPath.isNotEmpty && File(_recordedPath).existsSync()) {
+      await _player.startPlayer(fromURI: _recordedPath);
     } else {
-      Fluttertoast.showToast(msg: "No recording found.", gravity: ToastGravity.BOTTOM);
+      Fluttertoast.showToast(
+        msg: "No recording found.",
+        gravity: ToastGravity.BOTTOM,
+      );
     }
   }
 
@@ -127,38 +111,26 @@ class _AudioHomePageState extends State<AudioHomePage> {
     _audioPlayer.dispose();
     _recorder.closeRecorder();
     _player.closePlayer();
-    _noiseSubscription?.cancel();
+    _vad.dispose();
     _silenceChecker?.cancel();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Noise Meter Recording')),
-      body: Padding(
-        padding: EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton(onPressed: _playAssetAudio, child: Text('Play Asset Audio')),
-            SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _startRecordingWithNoiseDetection,
-              child: Text('Record with Noise Detection'),
-            ),
-            SizedBox(height: 16),
-            ElevatedButton(onPressed: _playRecordedVoice, child: Text('Play Recording')),
-            SizedBox(height: 32),
-            Text(
-              _currentDecibel != null
-                ? 'Mic Level: ${_currentDecibel!.toStringAsFixed(1)} dB'
-                : 'Mic Level: -- dB',
-              style: TextStyle(fontSize: 18),
-            ),
-          ],
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: Text('VAD Recording')),
+        body: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ElevatedButton(onPressed: _playAsset, child: Text('Play Asset Audio')),
+              SizedBox(height: 16),
+              ElevatedButton(onPressed: _startRecording, child: Text('Record with VAD')),
+              SizedBox(height: 16),
+              ElevatedButton(onPressed: _playRecording, child: Text('Play Recording')),
+            ],
+          ),
         ),
-      ),
-    );
-  }
+      );
 }
