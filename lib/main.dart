@@ -243,7 +243,7 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
               onPressed: () async {
                 var status = await Permission.microphone.status;
                 
-                if (status == PermissionStatus.denied) {
+                if (status == PermissionStatus.denied || status == PermissionStatus.permanentlyDenied) {
                   status = await Permission.microphone.request();
                 }
                 
