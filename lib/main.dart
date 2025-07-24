@@ -40,8 +40,27 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
 
   Future<void> _initializeVAD() async {
     try {
-      // Request microphone permission
-      final status = await Permission.microphone.request();
+      // Check current permission status first
+      var status = await Permission.microphone.status;
+      
+      if (status == PermissionStatus.denied) {
+        // Request permission if denied
+        status = await Permission.microphone.request();
+      }
+      
+      if (status == PermissionStatus.permanentlyDenied) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Microphone permission permanently denied. Please enable it in app settings.'),
+            action: SnackBarAction(
+              label: 'Open Settings',
+              onPressed: () => openAppSettings(),
+            ),
+          ),
+        );
+        return;
+      }
+      
       if (status != PermissionStatus.granted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Microphone permission is required')),
@@ -222,14 +241,54 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
             // Permission button
             TextButton.icon(
               onPressed: () async {
-                final status = await Permission.microphone.request();
+                var status = await Permission.microphone.status;
+                
+                if (status == PermissionStatus.denied) {
+                  status = await Permission.microphone.request();
+                }
+                
+                String message;
+                SnackBarAction? action;
+                
+                switch (status) {
+                  case PermissionStatus.granted:
+                    message = 'Microphone permission granted!';
+                    // Try to initialize VAD if not already done
+                    if (!_isInitialized) {
+                      _initializeVAD();
+                    }
+                    break;
+                  case PermissionStatus.denied:
+                    message = 'Microphone permission denied';
+                    break;
+                  case PermissionStatus.permanentlyDenied:
+                    message = 'Permission permanently denied. Open app settings to enable.';
+                    action = SnackBarAction(
+                      label: 'Settings',
+                      onPressed: () => openAppSettings(),
+                    );
+                    break;
+                  case PermissionStatus.restricted:
+                    message = 'Microphone access is restricted';
+                    break;
+                  case PermissionStatus.limited:
+                    message = 'Microphone access is limited';
+                    break;
+                  case PermissionStatus.provisional:
+                    message = 'Microphone permission is provisional';
+                    break;
+                }
+                
                 debugPrint("Microphone permission status: $status");
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Microphone permission: $status')),
+                  SnackBar(
+                    content: Text(message),
+                    action: action,
+                  ),
                 );
               },
               icon: const Icon(Icons.settings_voice),
-              label: const Text("Request Microphone Permission"),
+              label: const Text("Check/Request Microphone Permission"),
             ),
             
             SizedBox(height: 20),
