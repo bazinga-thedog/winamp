@@ -1,147 +1,158 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:vad/vad.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const MyApp());
-}
+void main() => runApp(AudioApp());
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
+class AudioApp extends StatelessWidget {
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(title: const Text("VAD Example")),
-        body: const MyHomePage(),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => MaterialApp(
+        title: 'VAD Recording',
+        theme: ThemeData(primarySwatch: Colors.indigo),
+        home: AudioHomePage(),
+      );
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key});
-
+class AudioHomePage extends StatefulWidget {
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  _AudioHomePageState createState() => _AudioHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  final _vadHandler = VadHandler.create(isDebug: true);
-  bool isListening = false;
-  final List<String> receivedEvents = [];
+class _AudioHomePageState extends State<AudioHomePage> {
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  final FlutterSoundPlayer _player = FlutterSoundPlayer();
+  late final VadHandlerBase _vad;
+
+  bool _recording = false;
+  DateTime _lastVoiceTime = DateTime.now();
+  Timer? _silenceChecker;
+  String _recordedPath = '';
 
   @override
   void initState() {
     super.initState();
-    _setupVadHandler();
+    _vad = VadHandler.create(isDebug: false);
+
+    _vad.onSpeechStart.listen((_) {
+      _lastVoiceTime = DateTime.now();
+      _showToast("Speech started");
+    });
+
+    _vad.onRealSpeechStart.listen((_) {
+      _lastVoiceTime = DateTime.now();
+      _showToast("Real speech detected");
+    });
+
+    _vad.onSpeechEnd.listen((_) {
+      _lastVoiceTime = DateTime.now();
+      _showToast("Speech ended");
+    });
+
+    _initSetup();
   }
 
-  void _setupVadHandler() {
-    _vadHandler.onSpeechStart.listen((_) {
-      debugPrint('Speech detected.');
-      setState(() {
-        receivedEvents.add('Speech detected.');
-      });
+  Future<void> _initSetup() async {
+    await Permission.microphone.request();
+    await Permission.storage.request();
+    await _player.openPlayer();
+    await _recorder.openRecorder();
+  }
+
+  Future<void> _playAsset() async {
+    await _audioPlayer.play(AssetSource('sample.mp3'));
+    _showToast("Playing asset audio");
+  }
+
+  Future<void> _startRecording() async {
+    _recording = true;
+    Directory dir = await getTemporaryDirectory();
+    _recordedPath = '${dir.path}/recorded.wav';
+    _lastVoiceTime = DateTime.now();
+
+    await _recorder.startRecorder(
+      toFile: _recordedPath,
+      codec: Codec.pcm16WAV,
+      numChannels: 1,
+      audioSource: AudioSource.microphone,
+    );
+
+    await _vad.startListening();
+    _showToast("Recording started");
+
+    _silenceChecker?.cancel();
+    _silenceChecker = Timer.periodic(const Duration(milliseconds: 200), (t) async {
+      if (!_recording) return t.cancel();
+      if (DateTime.now().difference(_lastVoiceTime).inMilliseconds > 1000) {
+        t.cancel();
+        await _stopRecording("Silence detected – recording stopped");
+      }
     });
 
-    _vadHandler.onRealSpeechStart.listen((_) {
-      debugPrint('Real speech start detected (not a misfire).');
-      setState(() {
-        receivedEvents.add('Real speech start detected (not a misfire).');
-      });
+    Future.delayed(const Duration(seconds: 20), () async {
+      if (_recording) await _stopRecording("20‑second limit reached");
     });
+  }
 
-    _vadHandler.onSpeechEnd.listen((List<double> samples) {
-      debugPrint('Speech ended, first 10 samples: ${samples.take(10).toList()}');
-      setState(() {
-        receivedEvents.add('Speech ended, first 10 samples: ${samples.take(10).toList()}');
-      });
-    });
+  Future<void> _stopRecording(String msg) async {
+    _recording = false;
+    _silenceChecker?.cancel();
+    await _vad.stopListening();
+    if (_recorder.isRecording) await _recorder.stopRecorder();
+    await _player.closePlayer();
+    await _player.openPlayer();
+    _showToast(msg);
+  }
 
-    _vadHandler.onFrameProcessed.listen((frameData) {
-      final isSpeech = frameData.isSpeech;
-      final notSpeech = frameData.notSpeech;
-      final firstFewSamples = frameData.frame.take(5).toList();
+  Future<void> _playRecording() async {
+    if (_recordedPath.isNotEmpty && File(_recordedPath).existsSync()) {
+      await _player.startPlayer(fromURI: _recordedPath);
+      _showToast("Playing recorded audio");
+    } else {
+      _showToast("No recording found");
+    }
+  }
 
-      debugPrint('Frame processed - Speech probability: $isSpeech, Not speech: $notSpeech');
-      debugPrint('First few audio samples: $firstFewSamples');
-
-      // You can use this for real-time audio processing
-    });
-
-    _vadHandler.onVADMisfire.listen((_) {
-      debugPrint('VAD misfire detected.');
-      setState(() {
-        receivedEvents.add('VAD misfire detected.');
-      });
-    });
-
-    _vadHandler.onError.listen((String message) {
-      debugPrint('Error: $message');
-      setState(() {
-        receivedEvents.add('Error: $message');
-      });
-    });
+  void _showToast(String message) {
+    Fluttertoast.showToast(
+      msg: message,
+      gravity: ToastGravity.BOTTOM,
+      toastLength: Toast.LENGTH_SHORT,
+      fontSize: 16.0,
+    );
   }
 
   @override
   void dispose() {
-    _vadHandler.dispose(); // Note: dispose() is called without await in Widget.dispose()
+    _audioPlayer.dispose();
+    _recorder.closeRecorder();
+    _player.closePlayer();
+    _vad.dispose();
+    _silenceChecker?.cancel();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ElevatedButton.icon(
-            onPressed: () async {
-              if (isListening) {
-                await _vadHandler.stopListening();
-              } else {
-                await _vadHandler.startListening();
-              }
-              setState(() {
-                isListening = !isListening;
-              });
-            },
-            icon: Icon(isListening ? Icons.stop : Icons.mic),
-            label: Text(isListening ? "Stop Listening" : "Start Listening"),
-            style: ElevatedButton.styleFrom(
-              minimumSize: const Size(double.infinity, 48),
-            ),
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: Text('VAD Recording')),
+        body: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ElevatedButton(onPressed: _playAsset, child: Text('Play Asset Audio')),
+              SizedBox(height: 16),
+              ElevatedButton(onPressed: _startRecording, child: Text('Record with VAD')),
+              SizedBox(height: 16),
+              ElevatedButton(onPressed: _playRecording, child: Text('Play Recording')),
+            ],
           ),
-          const SizedBox(height: 8),
-          TextButton.icon(
-            onPressed: () async {
-              final status = await Permission.microphone.request();
-              debugPrint("Microphone permission status: $status");
-            },
-            icon: const Icon(Icons.settings_voice),
-            label: const Text("Request Microphone Permission"),
-            style: TextButton.styleFrom(
-              minimumSize: const Size(double.infinity, 48),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: ListView.builder(
-              itemCount: receivedEvents.length,
-              itemBuilder: (context, index) {
-                return ListTile(
-                  title: Text(receivedEvents[index]),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+        ),
+      );
 }
