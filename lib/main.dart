@@ -122,14 +122,14 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
 
     try {
       _vadHandler.startListening(
+        frameSamples: 512,
+        minSpeechFrames: 8,
+        preSpeechPadFrames: 30,
+        redemptionFrames: 24,
         positiveSpeechThreshold: 0.5,
         negativeSpeechThreshold: 0.35,
-        preSpeechPadFrames: 1,
-        redemptionFrames: 8,
-        frameSamples: 1536, // For legacy model (default)
-        minSpeechFrames: 3,
         submitUserSpeechOnPause: false,
-        model: 'legacy', // Use 'v5' for Silero VAD v5 model
+        model: 'v5',
       );
       
       setState(() {
