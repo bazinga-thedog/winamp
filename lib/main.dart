@@ -1,158 +1,322 @@
-import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'package:flutter_sound/flutter_sound.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:fluttertoast/fluttertoast.dart';
 import 'package:vad/vad.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-void main() => runApp(AudioApp());
-
-class AudioApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'VAD Recording',
-        theme: ThemeData(primarySwatch: Colors.indigo),
-        home: AudioHomePage(),
-      );
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(MyApp());
 }
 
-class AudioHomePage extends StatefulWidget {
+class MyApp extends StatelessWidget {
   @override
-  _AudioHomePageState createState() => _AudioHomePageState();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Voice Activity Detection',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+      ),
+      home: VoiceDetectionScreen(),
+    );
+  }
 }
 
-class _AudioHomePageState extends State<AudioHomePage> {
-  final AudioPlayer _audioPlayer = AudioPlayer();
-  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
-  final FlutterSoundPlayer _player = FlutterSoundPlayer();
-  late final VadHandlerBase _vad;
+class VoiceDetectionScreen extends StatefulWidget {
+  @override
+  _VoiceDetectionScreenState createState() => _VoiceDetectionScreenState();
+}
 
-  bool _recording = false;
-  DateTime _lastVoiceTime = DateTime.now();
-  Timer? _silenceChecker;
-  String _recordedPath = '';
+class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
+  late VadHandlerBase _vadHandler;
+  bool _isListening = false;
+  bool _isInitialized = false;
+  List<VoiceEvent> _voiceEvents = [];
 
   @override
   void initState() {
     super.initState();
-    _vad = VadHandler.create(isDebug: false);
-
-    _vad.onSpeechStart.listen((_) {
-      _lastVoiceTime = DateTime.now();
-      _showToast("Speech started");
-    });
-
-    _vad.onRealSpeechStart.listen((_) {
-      _lastVoiceTime = DateTime.now();
-      _showToast("Real speech detected");
-    });
-
-    _vad.onSpeechEnd.listen((_) {
-      _lastVoiceTime = DateTime.now();
-      _showToast("Speech ended");
-    });
-
-    _initSetup();
+    _initializeVAD();
   }
 
-  Future<void> _initSetup() async {
-    await Permission.microphone.request();
-    await Permission.storage.request();
-    await _player.openPlayer();
-    await _recorder.openRecorder();
-  }
-
-  Future<void> _playAsset() async {
-    await _audioPlayer.play(AssetSource('sample.mp3'));
-    _showToast("Playing asset audio");
-  }
-
-  Future<void> _startRecording() async {
-    _recording = true;
-    Directory dir = await getTemporaryDirectory();
-    _recordedPath = '${dir.path}/recorded.wav';
-    _lastVoiceTime = DateTime.now();
-
-    await _recorder.startRecorder(
-      toFile: _recordedPath,
-      codec: Codec.pcm16WAV,
-      numChannels: 1,
-      audioSource: AudioSource.microphone,
-    );
-
-    await _vad.startListening();
-    _showToast("Recording started");
-
-    _silenceChecker?.cancel();
-    _silenceChecker = Timer.periodic(const Duration(milliseconds: 200), (t) async {
-      if (!_recording) return t.cancel();
-      if (DateTime.now().difference(_lastVoiceTime).inMilliseconds > 1000) {
-        t.cancel();
-        await _stopRecording("Silence detected – recording stopped");
+  Future<void> _initializeVAD() async {
+    try {
+      // Request microphone permission
+      final status = await Permission.microphone.request();
+      if (status != PermissionStatus.granted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Microphone permission is required')),
+        );
+        return;
       }
-    });
 
-    Future.delayed(const Duration(seconds: 20), () async {
-      if (_recording) await _stopRecording("20‑second limit reached");
-    });
-  }
+      // Initialize VAD handler
+      _vadHandler = VadHandler.create(isDebug: true);
+      
+      // Set up voice activity listeners
+      _vadHandler.onSpeechStart.listen((_) {
+        setState(() {
+          _voiceEvents.add(VoiceEvent(
+            type: VoiceEventType.started,
+            timestamp: DateTime.now(),
+          ));
+        });
+        debugPrint('Speech started at ${DateTime.now()}');
+      });
 
-  Future<void> _stopRecording(String msg) async {
-    _recording = false;
-    _silenceChecker?.cancel();
-    await _vad.stopListening();
-    if (_recorder.isRecording) await _recorder.stopRecorder();
-    await _player.closePlayer();
-    await _player.openPlayer();
-    _showToast(msg);
-  }
+      _vadHandler.onSpeechEnd.listen((List<double> samples) {
+        setState(() {
+          _voiceEvents.add(VoiceEvent(
+            type: VoiceEventType.stopped,
+            timestamp: DateTime.now(),
+          ));
+        });
+        debugPrint('Speech ended at ${DateTime.now()}');
+      });
 
-  Future<void> _playRecording() async {
-    if (_recordedPath.isNotEmpty && File(_recordedPath).existsSync()) {
-      await _player.startPlayer(fromURI: _recordedPath);
-      _showToast("Playing recorded audio");
-    } else {
-      _showToast("No recording found");
+      _vadHandler.onRealSpeechStart.listen((_) {
+        debugPrint('Real speech start detected (not a misfire).');
+      });
+
+      _vadHandler.onVADMisfire.listen((_) {
+        debugPrint('VAD misfire detected.');
+      });
+
+      _vadHandler.onError.listen((String message) {
+        debugPrint('VAD Error: $message');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('VAD Error: $message')),
+        );
+      });
+
+      setState(() {
+        _isInitialized = true;
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to initialize VAD: $e')),
+      );
     }
   }
 
-  void _showToast(String message) {
-    Fluttertoast.showToast(
-      msg: message,
-      gravity: ToastGravity.BOTTOM,
-      toastLength: Toast.LENGTH_SHORT,
-      fontSize: 16.0,
-    );
+  Future<void> _startListening() async {
+    if (!_isInitialized) return;
+
+    try {
+      _vadHandler.startListening(
+        positiveSpeechThreshold: 0.5,
+        negativeSpeechThreshold: 0.35,
+        preSpeechPadFrames: 1,
+        redemptionFrames: 8,
+        frameSamples: 1536, // For legacy model (default)
+        minSpeechFrames: 3,
+        submitUserSpeechOnPause: false,
+        model: 'legacy', // Use 'v5' for Silero VAD v5 model
+      );
+      
+      setState(() {
+        _isListening = true;
+        _voiceEvents.clear(); // Clear previous events when starting
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to start listening: $e')),
+      );
+    }
+  }
+
+  Future<void> _stopListening() async {
+    try {
+      _vadHandler.stopListening();
+      setState(() {
+        _isListening = false;
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to stop listening: $e')),
+      );
+    }
+  }
+
+  String _formatTimestamp(DateTime timestamp) {
+    return '${timestamp.hour.toString().padLeft(2, '0')}:'
+           '${timestamp.minute.toString().padLeft(2, '0')}:'
+           '${timestamp.second.toString().padLeft(2, '0')}.'
+           '${timestamp.millisecond.toString().padLeft(3, '0')}';
   }
 
   @override
   void dispose() {
-    _audioPlayer.dispose();
-    _recorder.closeRecorder();
-    _player.closePlayer();
-    _vad.dispose();
-    _silenceChecker?.cancel();
+    if (_isInitialized) {
+      _vadHandler.dispose();
+    }
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: Text('VAD Recording')),
-        body: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ElevatedButton(onPressed: _playAsset, child: Text('Play Asset Audio')),
-              SizedBox(height: 16),
-              ElevatedButton(onPressed: _startRecording, child: Text('Record with VAD')),
-              SizedBox(height: 16),
-              ElevatedButton(onPressed: _playRecording, child: Text('Play Recording')),
-            ],
-          ),
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Voice Activity Detection'),
+        backgroundColor: Colors.blue,
+        foregroundColor: Colors.white,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            // Status indicator
+            Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _isListening ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _isListening ? Colors.green : Colors.grey,
+                  width: 2,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    _isListening ? Icons.mic : Icons.mic_off,
+                    color: _isListening ? Colors.green : Colors.grey,
+                    size: 24,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    _isListening ? 'Listening for voice activity...' : 'Not listening',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                      color: _isListening ? Colors.green : Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            SizedBox(height: 20),
+            
+            // Start/Stop button
+            ElevatedButton(
+              onPressed: _isInitialized
+                  ? (_isListening ? _stopListening : _startListening)
+                  : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isListening ? Colors.red : Colors.blue,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(
+                _isListening ? 'Stop Listening' : 'Start Listening',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ),
+
+            SizedBox(height: 10),
+
+            // Permission button
+            TextButton.icon(
+              onPressed: () async {
+                final status = await Permission.microphone.request();
+                debugPrint("Microphone permission status: $status");
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Microphone permission: $status')),
+                );
+              },
+              icon: const Icon(Icons.settings_voice),
+              label: const Text("Request Microphone Permission"),
+            ),
+            
+            SizedBox(height: 20),
+            
+            // Events list header
+            if (_voiceEvents.isNotEmpty)
+              Text(
+                'Voice Activity Log',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+            
+            SizedBox(height: 10),
+            
+            // Events list
+            Expanded(
+              child: _voiceEvents.isEmpty
+                  ? Center(
+                      child: Text(
+                        _isListening
+                            ? 'Waiting for voice activity...'
+                            : 'Press "Start Listening" to begin voice detection',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey[600],
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _voiceEvents.length,
+                      itemBuilder: (context, index) {
+                        final event = _voiceEvents[index];
+                        return Card(
+                          margin: EdgeInsets.symmetric(vertical: 4),
+                          child: ListTile(
+                            leading: Icon(
+                              event.type == VoiceEventType.started
+                                  ? Icons.play_arrow
+                                  : Icons.stop,
+                              color: event.type == VoiceEventType.started
+                                  ? Colors.green
+                                  : Colors.red,
+                            ),
+                            title: Text(
+                              event.type == VoiceEventType.started
+                                  ? 'Voice Started'
+                                  : 'Voice Stopped',
+                              style: TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                            subtitle: Text(
+                              _formatTimestamp(event.timestamp),
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                            trailing: Text(
+                              '#${index + 1}',
+                              style: TextStyle(
+                                color: Colors.grey[500],
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
         ),
-      );
+      ),
+    );
+  }
+}
+
+class VoiceEvent {
+  final VoiceEventType type;
+  final DateTime timestamp;
+
+  VoiceEvent({
+    required this.type,
+    required this.timestamp,
+  });
+}
+
+enum VoiceEventType {
+  started,
+  stopped,
 }
