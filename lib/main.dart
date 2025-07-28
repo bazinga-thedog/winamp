@@ -79,7 +79,13 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
             timestamp: DateTime.now(),
           ));
         });
-        debugPrint('Speech started at ${DateTime.now()}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🎤 Speech started'),
+            duration: Duration(milliseconds: 1000),
+            backgroundColor: Colors.green,
+          ),
+        );
       });
 
       _vadHandler.onSpeechEnd.listen((List<double> samples) {
@@ -89,21 +95,41 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
             timestamp: DateTime.now(),
           ));
         });
-        debugPrint('Speech ended at ${DateTime.now()}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🔇 Speech ended'),
+            duration: Duration(milliseconds: 1000),
+            backgroundColor: Colors.red,
+          ),
+        );
       });
 
       _vadHandler.onRealSpeechStart.listen((_) {
-        debugPrint('Real speech start detected (not a misfire).');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Real speech confirmed'),
+            duration: Duration(milliseconds: 1500),
+            backgroundColor: Colors.blue,
+          ),
+        );
       });
 
       _vadHandler.onVADMisfire.listen((_) {
-        debugPrint('VAD misfire detected.');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('⚠️ VAD misfire detected'),
+            duration: Duration(milliseconds: 1500),
+            backgroundColor: Colors.orange,
+          ),
+        );
       });
 
       _vadHandler.onError.listen((String message) {
-        debugPrint('VAD Error: $message');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('VAD Error: $message')),
+          SnackBar(
+            content: Text('❌ VAD Error: $message'),
+            backgroundColor: Colors.red[700],
+          ),
         );
       });
 
@@ -122,14 +148,14 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
 
     try {
       _vadHandler.startListening(
-        frameSamples: 512,
-        minSpeechFrames: 8,
-        preSpeechPadFrames: 30,
-        redemptionFrames: 24,
         positiveSpeechThreshold: 0.5,
         negativeSpeechThreshold: 0.35,
+        preSpeechPadFrames: 1,
+        redemptionFrames: 8,
+        frameSamples: 1536, // For legacy model (default)
+        minSpeechFrames: 3,
         submitUserSpeechOnPause: false,
-        model: 'v5',
+        model: 'legacy', // Use 'v5' for Silero VAD v5 model
       );
       
       setState(() {
@@ -243,7 +269,7 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
               onPressed: () async {
                 var status = await Permission.microphone.status;
                 
-                if (status == PermissionStatus.denied || status == PermissionStatus.permanentlyDenied) {
+                if (status == PermissionStatus.denied) {
                   status = await Permission.microphone.request();
                 }
                 
@@ -279,7 +305,6 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                     break;
                 }
                 
-                debugPrint("Microphone permission status: $status");
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(message),
