@@ -31,7 +31,7 @@ class VoiceDetectionScreen extends StatefulWidget {
 }
 
 class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
-  final _vadHandler = VadHandler.create(isDebug: false);
+  final _vadHandler = VadHandler.create(isDebug: true);
   bool isListening = false;
   final List<VoiceEvent> voiceEvents = [];
 
@@ -129,15 +129,6 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
         final isSpeech = frameData.isSpeech;
         final notSpeech = frameData.notSpeech;
         debugPrint('📊 Frame: Speech=$isSpeech, NotSpeech=$notSpeech');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('🔇 Speech ($isSpeech )'),
-              duration: Duration(milliseconds: 800),
-              backgroundColor: Colors.blue,
-            ),
-          );
-        }
       }
     });
 
@@ -299,28 +290,41 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: () async {
-                      setState(() {
-                        if (isListening) {
-                          _vadHandler.stopListening();
-                          voiceEvents.clear(); // Clear events when stopping
-                        } else {
-                          // Try multiple VAD configurations for better compatibility
+                      if (isListening) {
+                        try {
+                          await _vadHandler.stopListening();
+                          setState(() {
+                            isListening = false;
+                            voiceEvents.clear(); // Clear events when stopping
+                          });
+                          debugPrint("VAD stopped successfully");
+                        } catch (e) {
+                          debugPrint("Error stopping VAD: $e");
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('❌ Error stopping VAD: $e')),
+                          );
+                        }
+                      } else {
+                        // Try multiple VAD configurations for better compatibility
+                        debugPrint(
+                            "Starting VAD with mobile-optimized settings...");
+                        try {
+                          // First try with more sensitive settings
+                          await _vadHandler.startListening(
+                            positiveSpeechThreshold: 0.3, // More sensitive
+                            negativeSpeechThreshold: 0.2, // More sensitive
+                            preSpeechPadFrames: 10, // Less padding for mobile
+                            redemptionFrames: 8, // Shorter redemption
+                            frameSamples: 512, // VAD v5 frame size
+                            minSpeechFrames: 3, // Lower minimum for mobile
+                            submitUserSpeechOnPause: false,
+                            model: 'v5', // Use VAD v5 model
+                          );
                           debugPrint(
-                              "Starting VAD with mobile-optimized settings...");
-                          try {
-                            // First try with more sensitive settings
-                            _vadHandler.startListening(
-                              positiveSpeechThreshold: 0.3, // More sensitive
-                              negativeSpeechThreshold: 0.2, // More sensitive
-                              preSpeechPadFrames: 10, // Less padding for mobile
-                              redemptionFrames: 8, // Shorter redemption
-                              frameSamples: 512, // VAD v5 frame size
-                              minSpeechFrames: 3, // Lower minimum for mobile
-                              submitUserSpeechOnPause: false,
-                              model: 'v5', // Use VAD v5 model
-                            );
-                            debugPrint(
-                                "VAD startListening() called successfully with sensitive settings");
+                              "VAD startListening() completed successfully with sensitive settings");
+
+                          setState(() {
+                            isListening = true;
                             voiceEvents.clear(); // Clear events when starting
 
                             // Add debug event
@@ -330,30 +334,29 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                               message:
                                   'VAD started with mobile-optimized settings (threshold: 0.3, minFrames: 3)',
                             ));
+                          });
 
-                            // Show helpful message
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                    '🎧 Started with sensitive settings - try speaking loudly!'),
-                                backgroundColor: Colors.green,
-                                duration: Duration(seconds: 3),
-                              ),
-                            );
-                          } catch (e) {
-                            debugPrint("Error starting VAD: $e");
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('❌ Failed to start VAD: $e'),
-                                backgroundColor: Colors.red,
-                                duration: Duration(seconds: 4),
-                              ),
-                            );
-                            return; // Don't change isListening if there was an error
-                          }
+                          // Show helpful message
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  '🎧 Started with sensitive settings - try speaking loudly!'),
+                              backgroundColor: Colors.green,
+                              duration: Duration(seconds: 3),
+                            ),
+                          );
+                        } catch (e) {
+                          debugPrint("Error starting VAD: $e");
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('❌ Failed to start VAD: $e'),
+                              backgroundColor: Colors.red,
+                              duration: Duration(seconds: 4),
+                            ),
+                          );
+                          // Don't change isListening if there was an error
                         }
-                        isListening = !isListening;
-                      });
+                      }
                     },
                     icon: Icon(isListening ? Icons.stop : Icons.mic),
                     label: Text(
@@ -379,7 +382,7 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                         ? () async {
                             try {
                               debugPrint("Testing VAD v4 (legacy) model...");
-                              _vadHandler.startListening(
+                              await _vadHandler.startListening(
                                 positiveSpeechThreshold: 0.2, // Very sensitive
                                 negativeSpeechThreshold: 0.1, // Very sensitive
                                 preSpeechPadFrames: 5, // Minimal padding
@@ -389,6 +392,9 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                                 submitUserSpeechOnPause: false,
                                 model: 'v4', // Try legacy model
                               );
+
+                              debugPrint(
+                                  "VAD v4 startListening() completed successfully");
 
                               setState(() {
                                 isListening = true;
@@ -404,12 +410,13 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                      '🧪 Testing VAD v4 with ultra-sensitive settings'),
+                                      '🧪 VAD v4 started with ultra-sensitive settings'),
                                   backgroundColor: Colors.purple,
                                   duration: Duration(seconds: 2),
                                 ),
                               );
                             } catch (e) {
+                              debugPrint("VAD v4 test failed: $e");
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                     content: Text('❌ VAD v4 test failed: $e')),
