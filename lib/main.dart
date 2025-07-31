@@ -31,7 +31,7 @@ class VoiceDetectionScreen extends StatefulWidget {
 }
 
 class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
-  final _vadHandler = VadHandler.create(isDebug: true);
+  final _vadHandler = VadHandler.create(isDebug: false);
   bool isListening = false;
   final List<VoiceEvent> voiceEvents = [];
 
@@ -45,7 +45,7 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
   Future<void> _requestPermissions() async {
     final status = await Permission.microphone.request();
     debugPrint("Initial microphone permission status: $status");
-    
+
     if (status == PermissionStatus.granted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -60,7 +60,7 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
   void _setupVadHandler() {
     // Add debug prints to see if events are being set up
     debugPrint("Setting up VAD handler...");
-    
+
     _vadHandler.onSpeechStart.listen((_) {
       debugPrint('🎤 Speech detected at ${DateTime.now()}');
       setState(() {
@@ -82,7 +82,8 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
     });
 
     _vadHandler.onRealSpeechStart.listen((_) {
-      debugPrint('✅ Real speech start detected (not a misfire) at ${DateTime.now()}');
+      debugPrint(
+          '✅ Real speech start detected (not a misfire) at ${DateTime.now()}');
       setState(() {
         voiceEvents.add(VoiceEvent(
           type: VoiceEventType.realSpeech,
@@ -102,7 +103,8 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
     });
 
     _vadHandler.onSpeechEnd.listen((List<double> samples) {
-      debugPrint('🔇 Speech ended at ${DateTime.now()}, samples: ${samples.length}');
+      debugPrint(
+          '🔇 Speech ended at ${DateTime.now()}, samples: ${samples.length}');
       setState(() {
         voiceEvents.add(VoiceEvent(
           type: VoiceEventType.stopped,
@@ -169,7 +171,7 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
         );
       }
     });
-    
+
     debugPrint("VAD handler setup complete");
   }
 
@@ -181,9 +183,9 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
 
   String _formatTimestamp(DateTime timestamp) {
     return '${timestamp.hour.toString().padLeft(2, '0')}:'
-           '${timestamp.minute.toString().padLeft(2, '0')}:'
-           '${timestamp.second.toString().padLeft(2, '0')}.'
-           '${timestamp.millisecond.toString().padLeft(3, '0')}';
+        '${timestamp.minute.toString().padLeft(2, '0')}:'
+        '${timestamp.second.toString().padLeft(2, '0')}.'
+        '${timestamp.millisecond.toString().padLeft(3, '0')}';
   }
 
   Color _getEventColor(VoiceEventType type) {
@@ -248,8 +250,8 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
             Container(
               padding: EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: isListening 
-                    ? Colors.green.withOpacity(0.1) 
+                color: isListening
+                    ? Colors.green.withOpacity(0.1)
                     : Colors.grey.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
@@ -267,8 +269,8 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                   ),
                   SizedBox(width: 8),
                   Text(
-                    isListening 
-                        ? 'Listening for voice activity...' 
+                    isListening
+                        ? 'Listening for voice activity...'
                         : 'Not listening',
                     style: TextStyle(
                       fontSize: 16,
@@ -279,9 +281,9 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                 ],
               ),
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // Control buttons
             Row(
               children: [
@@ -294,38 +296,41 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                           voiceEvents.clear(); // Clear events when stopping
                         } else {
                           // Try multiple VAD configurations for better compatibility
-                          debugPrint("Starting VAD with mobile-optimized settings...");
+                          debugPrint(
+                              "Starting VAD with mobile-optimized settings...");
                           try {
                             // First try with more sensitive settings
                             _vadHandler.startListening(
-                              positiveSpeechThreshold: 0.3,   // More sensitive
-                              negativeSpeechThreshold: 0.2,   // More sensitive  
-                              preSpeechPadFrames: 10,         // Less padding for mobile
-                              redemptionFrames: 8,            // Shorter redemption
-                              frameSamples: 512,              // VAD v5 frame size
-                              minSpeechFrames: 3,             // Lower minimum for mobile
+                              positiveSpeechThreshold: 0.3, // More sensitive
+                              negativeSpeechThreshold: 0.2, // More sensitive
+                              preSpeechPadFrames: 10, // Less padding for mobile
+                              redemptionFrames: 8, // Shorter redemption
+                              frameSamples: 512, // VAD v5 frame size
+                              minSpeechFrames: 3, // Lower minimum for mobile
                               submitUserSpeechOnPause: false,
-                              model: 'v5',                    // Use VAD v5 model
+                              model: 'v5', // Use VAD v5 model
                             );
-                            debugPrint("VAD startListening() called successfully with sensitive settings");
+                            debugPrint(
+                                "VAD startListening() called successfully with sensitive settings");
                             voiceEvents.clear(); // Clear events when starting
-                            
+
                             // Add debug event
                             voiceEvents.add(VoiceEvent(
                               type: VoiceEventType.started,
                               timestamp: DateTime.now(),
-                              message: 'VAD started with mobile-optimized settings (threshold: 0.3, minFrames: 3)',
+                              message:
+                                  'VAD started with mobile-optimized settings (threshold: 0.3, minFrames: 3)',
                             ));
-                            
+
                             // Show helpful message
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text('🎧 Started with sensitive settings - try speaking loudly!'),
+                                content: Text(
+                                    '🎧 Started with sensitive settings - try speaking loudly!'),
                                 backgroundColor: Colors.green,
                                 duration: Duration(seconds: 3),
                               ),
                             );
-                            
                           } catch (e) {
                             debugPrint("Error starting VAD: $e");
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -342,7 +347,8 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                       });
                     },
                     icon: Icon(isListening ? Icons.stop : Icons.mic),
-                    label: Text(isListening ? "Stop Listening" : "Start Listening"),
+                    label: Text(
+                        isListening ? "Stop Listening" : "Start Listening"),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: isListening ? Colors.red : Colors.blue,
                       foregroundColor: Colors.white,
@@ -352,51 +358,56 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                 ),
               ],
             ),
-            
+
             const SizedBox(height: 8),
-            
+
             // Additional test buttons
             Row(
               children: [
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: !isListening ? () async {
-                      try {
-                        debugPrint("Testing VAD v4 (legacy) model...");
-                        _vadHandler.startListening(
-                          positiveSpeechThreshold: 0.2,   // Very sensitive
-                          negativeSpeechThreshold: 0.1,   // Very sensitive
-                          preSpeechPadFrames: 5,          // Minimal padding
-                          redemptionFrames: 4,            // Short redemption
-                          frameSamples: 1536,             // VAD v4 frame size
-                          minSpeechFrames: 2,             // Very low minimum
-                          submitUserSpeechOnPause: false,
-                          model: 'v4',                    // Try legacy model
-                        );
-                        
-                        setState(() {
-                          isListening = true;
-                          voiceEvents.clear();
-                          voiceEvents.add(VoiceEvent(
-                            type: VoiceEventType.started,
-                            timestamp: DateTime.now(),
-                            message: 'VAD v4 started with ultra-sensitive settings (threshold: 0.2)',
-                          ));
-                        });
-                        
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('🧪 Testing VAD v4 with ultra-sensitive settings'),
-                            backgroundColor: Colors.purple,
-                            duration: Duration(seconds: 2),
-                          ),
-                        );
-                      } catch (e) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('❌ VAD v4 test failed: $e')),
-                        );
-                      }
-                    } : null,
+                    onPressed: !isListening
+                        ? () async {
+                            try {
+                              debugPrint("Testing VAD v4 (legacy) model...");
+                              _vadHandler.startListening(
+                                positiveSpeechThreshold: 0.2, // Very sensitive
+                                negativeSpeechThreshold: 0.1, // Very sensitive
+                                preSpeechPadFrames: 5, // Minimal padding
+                                redemptionFrames: 4, // Short redemption
+                                frameSamples: 1536, // VAD v4 frame size
+                                minSpeechFrames: 2, // Very low minimum
+                                submitUserSpeechOnPause: false,
+                                model: 'v4', // Try legacy model
+                              );
+
+                              setState(() {
+                                isListening = true;
+                                voiceEvents.clear();
+                                voiceEvents.add(VoiceEvent(
+                                  type: VoiceEventType.started,
+                                  timestamp: DateTime.now(),
+                                  message:
+                                      'VAD v4 started with ultra-sensitive settings (threshold: 0.2)',
+                                ));
+                              });
+
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                      '🧪 Testing VAD v4 with ultra-sensitive settings'),
+                                  backgroundColor: Colors.purple,
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                    content: Text('❌ VAD v4 test failed: $e')),
+                              );
+                            }
+                          }
+                        : null,
                     icon: const Icon(Icons.science),
                     label: const Text("Test v4"),
                     style: ElevatedButton.styleFrom(
@@ -410,10 +421,10 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                   onPressed: () async {
                     final status = await Permission.microphone.request();
                     debugPrint("Microphone permission status: $status");
-                    
+
                     String message;
                     SnackBarAction? action;
-                    
+
                     switch (status) {
                       case PermissionStatus.granted:
                         message = '🎉 Microphone permission granted!';
@@ -422,7 +433,8 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                         message = '❌ Microphone permission denied';
                         break;
                       case PermissionStatus.permanentlyDenied:
-                        message = '🔒 Permission permanently denied. Open app settings to enable.';
+                        message =
+                            '🔒 Permission permanently denied. Open app settings to enable.';
                         action = SnackBarAction(
                           label: 'Settings',
                           onPressed: () => openAppSettings(),
@@ -434,14 +446,14 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                       default:
                         message = '⚠️ Microphone permission: $status';
                     }
-                    
+
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(message),
                           action: action,
-                          backgroundColor: status == PermissionStatus.granted 
-                              ? Colors.green 
+                          backgroundColor: status == PermissionStatus.granted
+                              ? Colors.green
                               : Colors.red[700],
                         ),
                       );
@@ -456,9 +468,9 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                 ),
               ],
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // Events list header
             if (voiceEvents.isNotEmpty)
               Text(
@@ -469,9 +481,9 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                   color: Colors.black87,
                 ),
               ),
-            
+
             const SizedBox(height: 10),
-            
+
             // Events list
             Expanded(
               child: voiceEvents.isEmpty
@@ -516,7 +528,8 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
                             ),
                             title: Text(
                               _getEventTitle(event.type),
-                              style: const TextStyle(fontWeight: FontWeight.w500),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w500),
                             ),
                             subtitle: Text(
                               _formatTimestamp(event.timestamp),
