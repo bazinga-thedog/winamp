@@ -129,6 +129,15 @@ class _VoiceDetectionScreenState extends State<VoiceDetectionScreen> {
         final isSpeech = frameData.isSpeech;
         final notSpeech = frameData.notSpeech;
         debugPrint('📊 Frame: Speech=$isSpeech, NotSpeech=$notSpeech');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('🔇 Speech ($isSpeech )'),
+              duration: Duration(milliseconds: 800),
+              backgroundColor: Colors.blue,
+            ),
+          );
+        }
       }
     });
 
