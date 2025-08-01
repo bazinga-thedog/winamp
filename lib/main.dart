@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_recorder/flutter_recorder.dart';
 import 'package:path_provider/path_provider.dart';
@@ -39,9 +38,10 @@ class _RecorderScreenState extends State<RecorderScreen> {
   int _recordDuration = 0;
   int _silenceDuration = 0;
   String? _recordedFilePath;
+  String? _currentRecordingPath;
   Timer? _recordTimer;
-  StreamSubscription<RecorderSilenceEvent>? _silenceSub;
-  StreamSubscription<RecorderState>? _stateSub;
+  StreamSubscription? _silenceSub;
+  StreamSubscription? _stateSub;
 
   @override
   void dispose() {
@@ -55,22 +55,25 @@ class _RecorderScreenState extends State<RecorderScreen> {
   Future<void> _startRecording() async {
     final status = await Permission.microphone.request();
     if (status != PermissionStatus.granted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Microphone permission denied')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Microphone permission denied')),
+        );
+      }
       return;
     }
     final dir = await getTemporaryDirectory();
     final filePath = '${dir.path}/flutter_recorder_${DateTime.now().millisecondsSinceEpoch}.wav';
+    _currentRecordingPath = filePath;
     await Recorder.instance.init(
       sampleRate: 44100,
-      channels: 1,
+      channels: RecorderChannels.mono,
       format: PCMFormat.s16le,
     );
     Recorder.instance.setSilenceDetection(
       enable: true,
       onSilenceChanged: (isSilent, decibel) {
-        // handled by stream below
+        _handleSilenceChange(isSilent, decibel);
       },
     );
     Recorder.instance.setSilenceThresholdDb(-45); // dB, adjust as needed
@@ -86,14 +89,12 @@ class _RecorderScreenState extends State<RecorderScreen> {
         _recordDuration++;
       });
     });
-    _silenceSub = Recorder.instance.silenceChangedEvents.listen(_handleSilenceEvent);
-    _stateSub = Recorder.instance.stateChangedEvents.listen(_handleStateEvent);
-    await Recorder.instance.startRecording(completeFilePath: filePath);
+    Recorder.instance.startRecording(completeFilePath: filePath);
   }
 
-  void _handleSilenceEvent(RecorderSilenceEvent event) {
+  void _handleSilenceChange(bool isSilent, double decibel) {
     if (!_isRecording) return;
-    if (event.isSilent) {
+    if (isSilent) {
       // Increase silence duration
       setState(() {
         _silenceDuration++;
@@ -111,32 +112,20 @@ class _RecorderScreenState extends State<RecorderScreen> {
     }
   }
 
-  void _handleStateEvent(RecorderState state) {
-    if (state == RecorderState.stopped && _isRecording) {
-      _onRecordingStopped();
-    }
-  }
-
   Future<void> _stopRecording() async {
     if (!_isRecording) return;
     _recordTimer?.cancel();
     _silenceSub?.cancel();
     _stateSub?.cancel();
-    await Recorder.instance.stopRecording();
-    // The file path is the one we set at start
+    Recorder.instance.stopRecording();
+    // Use the stored file path
     setState(() {
       _isRecording = false;
-      // _recordedFilePath is already set
+      _recordedFilePath = _currentRecordingPath;
     });
   }
 
-  void _onRecordingStopped() async {
-    final filePath = await Recorder.instance.getCurrentFilePath();
-    setState(() {
-      _isRecording = false;
-      _recordedFilePath = filePath;
-    });
-  }
+
 
   Future<void> _playRecording() async {
     if (_recordedFilePath == null) return;
