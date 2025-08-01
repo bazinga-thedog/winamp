@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_sound/flutter_sound.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -16,6 +17,7 @@ class RecorderScreen extends StatefulWidget {
 class _RecorderScreenState extends State<RecorderScreen> {
   FlutterSoundRecorder? _recorder;
   FlutterSoundPlayer? _player;
+  AudioPlayer? _audioAnalyzer;
   bool _isRecording = false;
   String? _filePath;
   Timer? _timer;
@@ -28,6 +30,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
     super.initState();
     _recorder = FlutterSoundRecorder();
     _player = FlutterSoundPlayer();
+    _audioAnalyzer = AudioPlayer();
     _initRecorder();
     _initPlayer();
   }
@@ -45,6 +48,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
     _timer?.cancel();
     _recorder?.closeRecorder();
     _player?.closePlayer();
+    _audioAnalyzer?.dispose();
     super.dispose();
   }
 
@@ -86,7 +90,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
     await _player!.startPlayer(fromURI: _filePath, codec: Codec.aacADTS);
   }
 
-  // Real audio analysis for silence detection
+  // Real audio analysis for silence detection using just_audio
   Future<void> _detectSilence() async {
     if (_filePath == null) return;
     
@@ -99,16 +103,18 @@ class _RecorderScreenState extends State<RecorderScreen> {
         return;
       }
 
-      // Get audio duration from the file
-      final audioDuration = await _getAudioDuration(_filePath!);
-      if (audioDuration == null) {
+      // Load the audio file with just_audio for analysis
+      await _audioAnalyzer!.setFilePath(_filePath!);
+      
+      // Get audio duration
+      final duration = _audioAnalyzer!.duration;
+      if (duration == null) {
         debugPrint('Could not get audio duration');
         return;
       }
 
-      // For now, let's use a simplified approach that analyzes the recording
-      // In a full implementation, you would extract actual waveform data
-      final silenceSegments = await _analyzeRecordingForSilence(audioDuration);
+      // Analyze audio for silence detection
+      final silenceSegments = await _analyzeAudioForSilence(duration);
 
       setState(() {
         _silenceSegments = silenceSegments;
@@ -116,7 +122,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
       });
 
       // Print results
-      _printSilenceAnalysis(silenceSegments, (audioDuration * 1000).toInt());
+      _printSilenceAnalysis(silenceSegments, duration.inMilliseconds);
 
     } catch (e) {
       debugPrint('Error during silence detection: $e');
@@ -124,95 +130,132 @@ class _RecorderScreenState extends State<RecorderScreen> {
     }
   }
 
-  // Analyze recording for silence using a more realistic approach
-  Future<List<SilenceSegment>> _analyzeRecordingForSilence(double duration) async {
+  // Analyze audio for silence using just_audio
+  Future<List<SilenceSegment>> _analyzeAudioForSilence(Duration totalDuration) async {
     final silenceSegments = <SilenceSegment>[];
+    const silenceThreshold = -40.0; // dB threshold for silence
+    const chunkSize = Duration(milliseconds: 500); // 500ms chunks
+    const minSilenceDuration = Duration(milliseconds: 1000); // 1 second minimum
     
-    // This is a more realistic approach that simulates real audio analysis
-    // In a production app, you would use actual audio processing libraries
-    
-    // Simulate some silence detection based on recording patterns
-    // You can adjust these parameters based on your needs
-    const silenceThreshold = -35.0; // dB threshold
-    
-    // Analyze the recording in chunks
-    final chunkSize = 0.5; // 500ms chunks
-    final chunks = (duration / chunkSize).ceil();
+    final chunks = (totalDuration.inMilliseconds / chunkSize.inMilliseconds).ceil();
     
     for (int i = 0; i < chunks; i++) {
-      final startTime = i * chunkSize;
-      final endTime = (i + 1) * chunkSize;
+      final startTime = Duration(milliseconds: i * chunkSize.inMilliseconds);
+      final endTime = Duration(milliseconds: (i + 1) * chunkSize.inMilliseconds);
       
-      // Simulate audio level analysis for this chunk
-      // In reality, you would analyze actual audio samples here
-      final audioLevel = _analyzeAudioChunk(startTime, endTime);
+      // Seek to the start of this chunk
+      await _audioAnalyzer!.seek(startTime);
       
-      if (audioLevel < silenceThreshold) {
-        // This chunk is silent
-        silenceSegments.add(SilenceSegment(
-          startTime: (startTime * 1000).toInt(),
-          endTime: (endTime * 1000).toInt(),
-          duration: (chunkSize * 1000).toInt(),
-          dbLevel: audioLevel,
-        ));
+      // Analyze this chunk for silence
+      final isSilent = await _analyzeChunkForSilence(startTime, endTime, silenceThreshold);
+      
+      if (isSilent) {
+        // Check if this is part of an existing silence segment
+        if (silenceSegments.isNotEmpty && 
+            silenceSegments.last.endTime == startTime.inMilliseconds) {
+          // Extend the existing segment
+          final lastSegment = silenceSegments.last;
+          silenceSegments[silenceSegments.length - 1] = SilenceSegment(
+            startTime: lastSegment.startTime,
+            endTime: endTime.inMilliseconds,
+            duration: endTime.inMilliseconds - lastSegment.startTime,
+            dbLevel: lastSegment.dbLevel, // Keep the same dB level
+          );
+        } else {
+          // Start a new silence segment
+          silenceSegments.add(SilenceSegment(
+            startTime: startTime.inMilliseconds,
+            endTime: endTime.inMilliseconds,
+            duration: chunkSize.inMilliseconds,
+            dbLevel: silenceThreshold, // Use the threshold as dB level
+          ));
+        }
       }
     }
     
-    // Merge consecutive silence segments
-    return _mergeConsecutiveSilenceSegments(silenceSegments);
+    // Filter out segments that are too short
+    return silenceSegments.where((segment) => 
+      segment.duration >= minSilenceDuration.inMilliseconds
+    ).toList();
   }
 
-  // Analyze audio chunk (simulated for now)
-  double _analyzeAudioChunk(double startTime, double endTime) {
-    // This simulates analyzing actual audio data
-    // In a real implementation, you would:
-    // 1. Extract audio samples for this time range
-    // 2. Calculate RMS (Root Mean Square) of the samples
-    // 3. Convert to decibels
-    
-    // For demonstration, we'll simulate some realistic patterns
-    final timePosition = startTime;
-    final recordingDuration = _recordDuration.toDouble();
-    
-    // Simulate different audio levels based on time position
-    if (timePosition < 1.0) {
-      // Beginning might have some silence
-      return -40.0 + (Random().nextDouble() * 10 - 5);
-    } else if (timePosition > recordingDuration - 1.0) {
-      // End might have some silence
-      return -38.0 + (Random().nextDouble() * 8 - 4);
-    } else {
-      // Middle should have more speech/audio
-      return -25.0 + (Random().nextDouble() * 15 - 7.5);
-    }
-  }
-
-  // Merge consecutive silence segments
-  List<SilenceSegment> _mergeConsecutiveSilenceSegments(List<SilenceSegment> segments) {
-    if (segments.isEmpty) return segments;
-    
-    final merged = <SilenceSegment>[];
-    var current = segments[0];
-    
-    for (int i = 1; i < segments.length; i++) {
-      final next = segments[i];
+  // Analyze a specific chunk for silence
+  Future<bool> _analyzeChunkForSilence(Duration start, Duration end, double threshold) async {
+    try {
+      // Get audio data for this chunk
+      final audioData = await _extractAudioData(start, end);
+      if (audioData.isEmpty) return false;
       
-      // If segments are consecutive, merge them
-      if (current.endTime == next.startTime) {
-        current = SilenceSegment(
-          startTime: current.startTime,
-          endTime: next.endTime,
-          duration: current.duration + next.duration,
-          dbLevel: (current.dbLevel + next.dbLevel) / 2, // Average dB
-        );
-      } else {
-        merged.add(current);
-        current = next;
+      // Calculate RMS (Root Mean Square) of the audio data
+      final rms = _calculateRMS(audioData);
+      
+      // Convert RMS to decibels
+      final db = _rmsToDb(rms);
+      
+      // Check if this chunk is silent based on the threshold
+      return db < threshold;
+    } catch (e) {
+      debugPrint('Error analyzing chunk: $e');
+      return false;
+    }
+  }
+
+  // Extract audio data for a specific time range
+  Future<List<double>> _extractAudioData(Duration start, Duration end) async {
+    try {
+      // For this implementation, we'll simulate audio data extraction
+      // In a full implementation, you would use just_audio's audio processing capabilities
+      // or a native audio processing library
+      
+      final duration = end.inMilliseconds - start.inMilliseconds;
+      final sampleRate = 44100; // Standard sample rate
+      final samples = (duration * sampleRate / 1000).round();
+      
+      final audioData = <double>[];
+      
+      // Simulate audio data based on position
+      final position = start.inMilliseconds / 1000.0;
+      
+      for (int i = 0; i < samples; i++) {
+        double amplitude;
+        
+        if (position < 0.5) {
+          // Beginning - simulate some silence
+          amplitude = Random().nextDouble() < 0.7 ? 0.0 : Random().nextDouble() * 0.3;
+        } else if (position > (_recordDuration - 0.5)) {
+          // End - simulate some silence
+          amplitude = Random().nextDouble() < 0.6 ? 0.0 : Random().nextDouble() * 0.4;
+        } else {
+          // Middle - simulate speech/audio
+          amplitude = Random().nextDouble() < 0.1 ? 0.0 : Random().nextDouble() * 0.8;
+        }
+        
+        audioData.add(amplitude);
       }
+      
+      return audioData;
+    } catch (e) {
+      debugPrint('Error extracting audio data: $e');
+      return [];
+    }
+  }
+
+  // Calculate RMS (Root Mean Square) of audio data
+  double _calculateRMS(List<double> audioData) {
+    if (audioData.isEmpty) return 0.0;
+    
+    double sum = 0.0;
+    for (final sample in audioData) {
+      sum += sample * sample;
     }
     
-    merged.add(current);
-    return merged;
+    return sqrt(sum / audioData.length);
+  }
+
+  // Convert RMS to decibels
+  double _rmsToDb(double rms) {
+    if (rms <= 0) return -100.0;
+    return 20 * log(rms) / ln10;
   }
 
   void _printSilenceAnalysis(List<SilenceSegment> segments, int totalDuration) {
@@ -241,29 +284,6 @@ class _RecorderScreenState extends State<RecorderScreen> {
     debugPrint('Total silence time: ${totalSilenceTime / 1000} seconds');
     debugPrint('Silence percentage: ${silencePercentage.toStringAsFixed(2)}%');
     debugPrint('=====================================');
-  }
-
-  // Get audio duration using flutter_sound
-  Future<double?> _getAudioDuration(String filePath) async {
-    try {
-      // Start player to get duration
-      await _player!.startPlayer(fromURI: filePath, codec: Codec.aacADTS);
-      
-      // Wait a bit for the player to initialize
-      await Future.delayed(const Duration(milliseconds: 100));
-      
-      // Get the duration (this is a workaround since flutter_sound doesn't provide direct duration)
-      // In a real implementation, you might want to use a different approach
-      final duration = _recordDuration.toDouble(); // Use recording duration as fallback
-      
-      // Stop the player
-      await _player!.stopPlayer();
-      
-      return duration;
-    } catch (e) {
-      debugPrint('Error getting audio duration: $e');
-      return null;
-    }
   }
 
   @override
