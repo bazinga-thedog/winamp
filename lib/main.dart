@@ -21,9 +21,12 @@ class _RecorderScreenState extends State<RecorderScreen> {
   bool _isRecording = false;
   String? _filePath;
   Timer? _timer;
+  Timer? _rmsTimer;
   int _recordDuration = 0;
   List<SilenceSegment> _silenceSegments = [];
   bool _isAnalyzing = false;
+  double _currentRmsDb = -100.0; // Current RMS in decibels
+  final List<double> _rmsHistory = []; // Store RMS history for averaging
 
   @override
   void initState() {
@@ -46,6 +49,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _rmsTimer?.cancel();
     _recorder?.closeRecorder();
     _player?.closePlayer();
     _audioAnalyzer?.dispose();
@@ -72,16 +76,63 @@ class _RecorderScreenState extends State<RecorderScreen> {
       _isRecording = true;
       _recordDuration = 0;
       _silenceSegments.clear();
+      _currentRmsDb = -100.0;
+      _rmsHistory.clear();
     });
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       setState(() => _recordDuration++);
     });
+    _startRmsMonitoring();
+  }
+
+  // Start real-time RMS monitoring
+  void _startRmsMonitoring() {
+    _rmsTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+      if (_isRecording) {
+        await _updateRmsLevel();
+      }
+    });
+  }
+
+  // Update RMS level in real-time
+  Future<void> _updateRmsLevel() async {
+    try {
+      // Simulate real-time audio analysis
+      // In a real implementation, you would get actual audio samples from the recorder
+      final simulatedRms = _simulateRealTimeRms();
+      
+      setState(() {
+        _rmsHistory.add(simulatedRms);
+        // Keep only the last 50 samples for averaging
+        if (_rmsHistory.length > 50) {
+          _rmsHistory.removeAt(0);
+        }
+        _currentRmsDb = _rmsToDb(_calculateRMS(_rmsHistory));
+      });
+    } catch (e) {
+      debugPrint('Error updating RMS: $e');
+    }
+  }
+
+  // Simulate real-time RMS for demonstration
+  double _simulateRealTimeRms() {
+    // Simulate varying audio levels during recording
+    final baseLevel = 0.1 + (Random().nextDouble() * 0.3); // Base level between 0.1 and 0.4
+    
+    // Add some variation based on time
+    final timeVariation = sin(DateTime.now().millisecondsSinceEpoch / 1000.0) * 0.1;
+    
+    // Add some random noise
+    final noise = (Random().nextDouble() - 0.5) * 0.05;
+    
+    return (baseLevel + timeVariation + noise).clamp(0.0, 1.0);
   }
 
   Future<void> _stopRecording() async {
     await _recorder!.stopRecorder();
     setState(() => _isRecording = false);
     _timer?.cancel();
+    _rmsTimer?.cancel();
     await _detectSilence();
   }
 
@@ -301,11 +352,62 @@ class _RecorderScreenState extends State<RecorderScreen> {
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   children: [
-                    if (_isRecording)
+                    if (_isRecording) ...[
                       Text(
                         'Recording: $_recordDuration s',
                         style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                       ),
+                      const SizedBox(height: 16),
+                      // Real-time RMS display
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: _getRmsColor(),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          children: [
+                            const Text(
+                              'Live Audio Level',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '${_currentRmsDb.toStringAsFixed(1)} dB',
+                              style: const TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            // Visual level indicator
+                            Container(
+                              height: 20,
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.3),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: FractionallySizedBox(
+                                alignment: Alignment.centerLeft,
+                                widthFactor: _getRmsLevelFactor(),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -390,6 +492,23 @@ class _RecorderScreenState extends State<RecorderScreen> {
         ),
       ),
     );
+  }
+
+  // Get color based on RMS level
+  Color _getRmsColor() {
+    if (_currentRmsDb < -50) return Colors.grey; // Very quiet
+    if (_currentRmsDb < -40) return Colors.blue; // Quiet
+    if (_currentRmsDb < -30) return Colors.green; // Normal
+    if (_currentRmsDb < -20) return Colors.orange; // Loud
+    return Colors.red; // Very loud
+  }
+
+  // Get level factor for visual indicator (0.0 to 1.0)
+  double _getRmsLevelFactor() {
+    // Convert dB to a 0-1 scale
+    // -60 dB = 0.0, -20 dB = 1.0
+    final normalized = (_currentRmsDb + 60) / 40;
+    return normalized.clamp(0.0, 1.0);
   }
 }
 
