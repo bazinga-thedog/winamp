@@ -8,6 +8,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:vad/vad.dart';
 
+void main() {
+  runApp(MyApp());
+}
+
 class RecorderScreen extends StatefulWidget {
   const RecorderScreen({super.key});
 
