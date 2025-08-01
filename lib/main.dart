@@ -3,9 +3,10 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_sound/flutter_sound.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:vad/vad.dart';
 
 class RecorderScreen extends StatefulWidget {
   const RecorderScreen({super.key});
@@ -19,179 +20,142 @@ class _RecorderScreenState extends State<RecorderScreen> {
   FlutterSoundPlayer? _player;
   AudioPlayer? _audioAnalyzer;
   bool _isRecording = false;
-  String? _filePath;
-  Timer? _timer;
-  Timer? _rmsTimer;
   int _recordDuration = 0;
+  Timer? _timer;
+  String? _currentRecordingPath;
   List<SilenceSegment> _silenceSegments = [];
   bool _isAnalyzing = false;
   double _currentRmsDb = -100.0; // Current RMS in decibels
-  final List<double> _rmsHistory = []; // Store RMS history for averaging
+  
+  // VAD (Voice Activity Detection) variables
+  VadHandlerBase? _vadHandler;
+  bool _isVoiceDetected = false;
+  double _voiceConfidence = 0.0;
+  bool _isListening = false;
 
   @override
   void initState() {
     super.initState();
-    _recorder = FlutterSoundRecorder();
-    _player = FlutterSoundPlayer();
-    _audioAnalyzer = AudioPlayer();
     _initRecorder();
-    _initPlayer();
+    _initVad();
   }
 
   Future<void> _initRecorder() async {
-    await _recorder!.openRecorder();
-  }
+    _recorder = FlutterSoundRecorder();
+    _player = FlutterSoundPlayer();
+    _audioAnalyzer = AudioPlayer();
 
-  Future<void> _initPlayer() async {
+    await _recorder!.openRecorder();
     await _player!.openPlayer();
   }
+
+  Future<void> _initVad() async {
+    try {
+      _vadHandler = VadHandler.create(isDebug: true);
+      debugPrint('VAD initialized successfully');
+    } catch (e) {
+      debugPrint('Error initializing VAD: $e');
+    }
+  }
+
+
 
   @override
   void dispose() {
     _timer?.cancel();
-    _rmsTimer?.cancel();
     _recorder?.closeRecorder();
     _player?.closePlayer();
     _audioAnalyzer?.dispose();
+    _vadHandler?.dispose();
     super.dispose();
   }
 
   Future<void> _startRecording() async {
-    final status = await Permission.microphone.request();
-    if (status != PermissionStatus.granted) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Microphone permission denied')),
-        );
-      }
-      return;
-    }
-    final dir = await getTemporaryDirectory();
-    _filePath = '${dir.path}/flutter_sound_example.aac';
-    await _recorder!.startRecorder(
-      toFile: _filePath,
-      codec: Codec.aacADTS,
-    );
-    setState(() {
-      _isRecording = true;
-      _recordDuration = 0;
-      _silenceSegments.clear();
-      _currentRmsDb = -100.0;
-      _rmsHistory.clear();
-    });
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() => _recordDuration++);
-    });
-    _startRmsMonitoring();
-  }
-
-  // Start real-time RMS monitoring
-  void _startRmsMonitoring() {
-    _rmsTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
-      if (_isRecording) {
-        await _updateRmsLevel();
-      }
-    });
-  }
-
-  // Update RMS level in real-time
-  Future<void> _updateRmsLevel() async {
     try {
-      // Get real audio amplitude from the recorder
-      if (_recorder != null && _isRecording) {
-        // Since flutter_sound doesn't provide direct amplitude access,
-        // we'll use a more realistic simulation based on microphone input patterns
-        final realRms = _getRealisticAudioLevel();
-        final db = _rmsToDb(realRms);
-        
-        setState(() {
-          _rmsHistory.add(realRms);
-          // Keep only the last 50 samples for averaging
-          if (_rmsHistory.length > 50) {
-            _rmsHistory.removeAt(0);
-          }
-          _currentRmsDb = db;
-        });
+      final status = await Permission.microphone.request();
+      if (status != PermissionStatus.granted) {
+        throw RecordingPermissionException('Microphone permission not granted');
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      _currentRecordingPath = '${tempDir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.aac';
+
+      await _recorder!.startRecorder(
+        toFile: _currentRecordingPath,
+        codec: Codec.aacADTS,
+      );
+
+      setState(() {
+        _isRecording = true;
+        _recordDuration = 0;
+        _silenceSegments.clear();
+        _isAnalyzing = false;
+        _currentRmsDb = -100.0;
+        _isVoiceDetected = false;
+        _voiceConfidence = 0.0;
+      });
+
+      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        setState(() => _recordDuration++);
+      });
+
+      // Start VAD listening
+      if (_vadHandler != null && !_isListening) {
+        await _vadHandler!.startListening();
+        setState(() => _isListening = true);
       }
     } catch (e) {
-      debugPrint('Error updating RMS: $e');
-      // Fallback to simulated values if real analysis fails
-      final simulatedRms = _simulateRealTimeRms();
-      setState(() {
-        _rmsHistory.add(simulatedRms);
-        if (_rmsHistory.length > 50) {
-          _rmsHistory.removeAt(0);
-        }
-        _currentRmsDb = _rmsToDb(_calculateRMS(_rmsHistory));
-      });
+      debugPrint('Error starting recording: $e');
     }
   }
 
-  // Simulate real-time RMS for demonstration (fallback)
-  double _simulateRealTimeRms() {
-    // This is now only used as a fallback if real audio analysis fails
-    // Simulate varying audio levels during recording
-    final baseLevel = 0.01 + (Random().nextDouble() * 0.05); // Much lower base level
-    
-    // Add some variation based on time
-    final timeVariation = sin(DateTime.now().millisecondsSinceEpoch / 1000.0) * 0.02;
-    
-    // Add some random noise
-    final noise = (Random().nextDouble() - 0.5) * 0.01;
-    
-    return (baseLevel + timeVariation + noise).clamp(0.0, 1.0);
-  }
 
-  // Get realistic audio level based on typical microphone input patterns
-  double _getRealisticAudioLevel() {
-    // Simulate realistic microphone input levels
-    // These values are based on typical speech patterns
-    
-    // Base ambient noise level (very quiet)
-    double baseLevel = 0.001; // -60 dB equivalent
-    
-    // Add some realistic variation
-    final time = DateTime.now().millisecondsSinceEpoch / 1000.0;
-    final variation = sin(time * 2) * 0.002; // Small variation
-    
-    // Add some random noise to simulate real microphone input
-    final noise = (Random().nextDouble() - 0.5) * 0.001;
-    
-    // Simulate speech patterns (you can adjust these values)
-    // In a real implementation, you would get actual microphone data
-    final speechLevel = 0.01 + variation + noise; // -40 dB equivalent for speech
-    
-    return (baseLevel + speechLevel).clamp(0.0001, 1.0);
-  }
+
+
 
   Future<void> _stopRecording() async {
-    await _recorder!.stopRecorder();
-    setState(() => _isRecording = false);
-    _timer?.cancel();
-    _rmsTimer?.cancel();
-    await _detectSilence();
+    try {
+      await _recorder!.stopRecorder();
+      _timer?.cancel();
+
+      // Stop VAD listening
+      if (_vadHandler != null && _isListening) {
+        await _vadHandler!.stopListening();
+        setState(() => _isListening = false);
+      }
+
+      setState(() {
+        _isRecording = false;
+      });
+
+      if (_currentRecordingPath != null) {
+        await _detectSilence();
+      }
+    } catch (e) {
+      debugPrint('Error stopping recording: $e');
+    }
   }
 
   Future<void> _playRecording() async {
-    if (_filePath == null) return;
-    await _player!.startPlayer(fromURI: _filePath, codec: Codec.aacADTS);
+    if (_currentRecordingPath == null) return;
+    await _player!.startPlayer(fromURI: _currentRecordingPath, codec: Codec.aacADTS);
   }
 
   // Real audio analysis for silence detection using just_audio
   Future<void> _detectSilence() async {
-    if (_filePath == null) return;
+    if (_currentRecordingPath == null) return;
     
     setState(() => _isAnalyzing = true);
     
     try {
-      final file = File(_filePath!);
+      final file = File(_currentRecordingPath!);
       if (!await file.exists()) {
         debugPrint('Audio file does not exist');
         return;
       }
 
       // Load the audio file with just_audio for analysis
-      await _audioAnalyzer!.setFilePath(_filePath!);
+      await _audioAnalyzer!.setFilePath(_currentRecordingPath!);
       
       // Get audio duration
       final duration = _audioAnalyzer!.duration;
@@ -373,10 +337,12 @@ class _RecorderScreenState extends State<RecorderScreen> {
     debugPrint('=====================================');
   }
 
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Real Audio Analysis')),
+      appBar: AppBar(title: const Text('Real VAD Audio Analysis')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -394,20 +360,28 @@ class _RecorderScreenState extends State<RecorderScreen> {
                         style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 16),
-                      // Real-time RMS display
+                      // VAD (Voice Activity Detection) display
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: _getRmsColor(),
+                          color: _isVoiceDetected ? Colors.green : Colors.grey,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Column(
                           children: [
-                            const Text(
-                              'Live Audio Level',
-                              style: TextStyle(
-                                fontSize: 16,
+                            Text(
+                              _isVoiceDetected ? '🎤 Voice Detected' : '🔇 Silence',
+                              style: const TextStyle(
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Confidence: ${(_voiceConfidence * 100).toStringAsFixed(1)}%',
+                              style: const TextStyle(
+                                fontSize: 16,
                                 color: Colors.white,
                               ),
                             ),
@@ -415,13 +389,13 @@ class _RecorderScreenState extends State<RecorderScreen> {
                             Text(
                               '${_currentRmsDb.toStringAsFixed(1)} dB',
                               style: const TextStyle(
-                                fontSize: 28,
+                                fontSize: 24,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.white,
                               ),
                             ),
                             const SizedBox(height: 8),
-                            // Visual level indicator
+                            // Visual confidence indicator
                             Container(
                               height: 20,
                               width: double.infinity,
@@ -431,7 +405,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
                               ),
                               child: FractionallySizedBox(
                                 alignment: Alignment.centerLeft,
-                                widthFactor: _getRmsLevelFactor(),
+                                widthFactor: _voiceConfidence,
                                 child: Container(
                                   decoration: BoxDecoration(
                                     color: Colors.white,
@@ -457,11 +431,11 @@ class _RecorderScreenState extends State<RecorderScreen> {
                             foregroundColor: Colors.white,
                           ),
                         ),
-                        ElevatedButton.icon(
-                          onPressed: _filePath != null ? _playRecording : null,
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('Play'),
-                        ),
+                                                 ElevatedButton.icon(
+                           onPressed: _currentRecordingPath != null ? _playRecording : null,
+                           icon: const Icon(Icons.play_arrow),
+                           label: const Text('Play'),
+                         ),
                       ],
                     ),
                   ],
@@ -529,24 +503,6 @@ class _RecorderScreenState extends State<RecorderScreen> {
       ),
     );
   }
-
-  // Get color based on RMS level
-  Color _getRmsColor() {
-    if (_currentRmsDb < -60) return Colors.grey; // Very quiet (background noise)
-    if (_currentRmsDb < -50) return Colors.blue; // Quiet (whisper)
-    if (_currentRmsDb < -40) return Colors.green; // Normal speech
-    if (_currentRmsDb < -30) return Colors.orange; // Loud speech
-    if (_currentRmsDb < -20) return Colors.red; // Very loud
-    return Colors.purple; // Extremely loud
-  }
-
-  // Get level factor for visual indicator (0.0 to 1.0)
-  double _getRmsLevelFactor() {
-    // Convert dB to a 0-1 scale for real audio levels
-    // -80 dB = 0.0, -20 dB = 1.0 (typical microphone range)
-    final normalized = (_currentRmsDb + 80) / 60;
-    return normalized.clamp(0.0, 1.0);
-  }
 }
 
 class SilenceSegment {
@@ -563,8 +519,13 @@ class SilenceSegment {
   });
 }
 
-void main() {
-  runApp(const MaterialApp(
-    home: RecorderScreen(),
-  ));
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: RecorderScreen(),
+    );
+  }
 }
